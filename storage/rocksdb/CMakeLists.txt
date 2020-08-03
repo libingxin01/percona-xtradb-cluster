@@ -1,12 +1,11 @@
 # TODO: Copyrights
-SET(CMAKE_CXX_STANDARD 11)
 
 # by default MyRocks is not built
 IF (NOT DEFINED WITH_ROCKSDB)
   IF (WITHOUT_ROCKSDB OR WITHOUT_ROCKSDB_STORAGE_ENGINE)
     SET (WITH_ROCKSDB 0)
   ELSE ()
-    SET (WITH_ROCKSDB 1)
+    SET (WITH_ROCKSDB 0)
   ENDIF ()
 ENDIF ()
 
@@ -28,51 +27,72 @@ IF (NOT CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
   RETURN ()
 ENDIF ()
 
-# check compiler version, 4.8.0 is minimal accepted
-IF ((CMAKE_CXX_COMPILER_ID STREQUAL GNU) AND
-    (CMAKE_CXX_COMPILER_VERSION VERSION_LESS "4.8.0"))
-  MESSAGE (${MYROCKS_STATUS_MODE} "GCC >= 4.8.0 required. ${CMAKE_CXX_COMPILER_VERSION} found. Not building MyRocks")
-  RETURN ()
-ENDIF ()
+# Suppress warnings for all compilers
+remove_compile_flags(-Wundef)
+append_cflags_if_supported(-Wno-unused-parameter)
 
-# Suppress warnings for gcc-9
-IF(CMAKE_COMPILER_IS_GNUCXX AND
-   (CMAKE_CXX_COMPILER_VERSION VERSION_EQUAL 9.0 OR CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 9.0))
-  SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-copy -Wno-redundant-move -Wno-pessimizing-move -Wno-sign-compare")
+MY_CHECK_CXX_COMPILER_FLAG("-Wno-unused-variable" HAVE_NO_UNUSED_VARIABLE)
+IF(HAVE_NO_UNUSED_VARIABLE)
+  ADD_COMPILE_FLAGS(ha_rocksdb.cc COMPILE_FLAGS "-Wno-unused-variable")
 ENDIF()
 
-# Suppress warnings for clang-8
-IF((CMAKE_CXX_COMPILER_ID MATCHES "Clang") AND
-   (CMAKE_CXX_COMPILER_VERSION VERSION_EQUAL 8.0 OR CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 8.0))
-  SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-defaulted-function-deleted")
+MY_CHECK_CXX_COMPILER_FLAG("-Wcast-qual" HAVE_CAST_EQUAL)
+IF(HAVE_CAST_EQUAL)
+  SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-cast-qual")
+  SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-cast-qual")
 ENDIF()
 
-# Relax unused variable warnings for release modes
-MY_CHECK_CXX_COMPILER_FLAG("-Wunused-variable" HAVE_UNUSED_VARIABLE)
-IF(HAVE_UNUSED_VARIABLE)
-  SET(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Wno-unused-variable")
-  SET(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -Wno-unused-variable")
+MY_CHECK_CXX_COMPILER_FLAG("-Wno-shadow-field" HAVE_NO_SHADOW_FIELD)
+IF(HAVE_NO_SHADOW_FIELD)
+  ADD_COMPILE_FLAGS(ha_rocksdb.cc rocksdb/utilities/geodb/geodb_impl.cc rocksdb/memtable/hash_skiplist_rep.cc rocksdb/memtable/hash_cuckoo_rep.cc COMPILE_FLAGS "-Wno-shadow-field")
 ENDIF()
 
-# Relax fallthrough warnings we have no control over, as it's in zstd
-IF(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  MY_CHECK_CXX_COMPILER_FLAG("-Wimplicit-fallthrough=0" HAVE_IMPLICIT_FALLTHROUGH)
-  IF(HAVE_IMPLICIT_FALLTHROUGH)
-    SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wimplicit-fallthrough=0")
-    SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wimplicit-fallthrough=0")
+
+# Suppress warnings for all clang versions
+IF(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  remove_compile_flags(-Winconsistent-missing-destructor-override -Wdeprecated -Wextra-semi -Wnon-virtual-dtor)
+
+  MY_CHECK_CXX_COMPILER_FLAG("-Wno-conditional-uninitialized" HAVE_NO_CONDITIONAL_UNINITIALIZED)
+  IF(HAVE_NO_CONDITIONAL_UNINITIALIZED)
+    ADD_COMPILE_FLAGS(ha_rocksdb.cc rocksdb/env/env_posix.cc rocksdb/db/write_thread.cc COMPILE_FLAGS "-Wno-conditional-uninitialized")
   ENDIF()
 ENDIF()
 
-# Relax unused variable warnings
-SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-variable")
-SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-unused-variable")
 
-# check that compiler supports cxx11 and set options
-INCLUDE (check_stdcxx11)
-IF (!HAVE_STDCXX11)
-  MESSAGE (${MYROCKS_STATUS_MODE} "${CMAKE_CXX_COMPILER} doesn't support -std=c++11, you need one that does. Not building MyRocks")
-  RETURN ()
-ENDIF ()
+# Suppress warnings for clang-8 or newer
+IF(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS 8.0)
+  append_cflags_if_supported(-Wno-defaulted-function-deleted)
+ENDIF()
+
+
+# Suppress warnings for gcc-5 or newer
+IF(CMAKE_COMPILER_IS_GNUCXX AND NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS 5.0)
+  append_cflags_if_supported(-Wno-suggest-attribute=format)
+ENDIF()
+
+
+# Suppress warnings for gcc-7 or newer (it's in zstd)
+IF(CMAKE_COMPILER_IS_GNUCXX AND NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS 7.0)
+  append_cflags_if_supported(-Wimplicit-fallthrough=0)
+ENDIF()
+
+
+# Suppress warnings for gcc-9 or newer
+IF(CMAKE_COMPILER_IS_GNUCXX AND NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9.0)
+  append_cflags_if_supported(-Wno-deprecated-copy -Wno-pessimizing-move)
+
+  MY_CHECK_CXX_COMPILER_FLAG("-Wno-redundant-move" HAVE_NO_REDUNDANT_MOVE)
+  IF(HAVE_NO_REDUNDANT_MOVE)
+    ADD_COMPILE_FLAGS(rocksdb/db/range_del_aggregator.cc COMPILE_FLAGS "-Wno-redundant-move")
+  ENDIF()
+
+  MY_CHECK_CXX_COMPILER_FLAG("-Wno-sign-compare" HAVE_NO_SIGN_COMPARE)
+  IF(HAVE_NO_SIGN_COMPARE)
+    ADD_COMPILE_FLAGS(rocksdb/env/io_posix.cc rocksdb/port/port_posix.cc COMPILE_FLAGS "-Wno-sign-compare")
+  ENDIF()
+ENDIF()
+
+
 
 IF (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/rocksdb/Makefile")
   MESSAGE(SEND_ERROR "Missing Makefile in rocksdb directory. Try \"git submodule update\".")
@@ -95,7 +115,7 @@ int main() {
   const auto a = _mm_set_epi64x(0, 0);
   const auto b = _mm_set_epi64x(0, 0);
   const auto c = _mm_clmulepi64_si128(a, b, 0x00);
-  auto d = _mm_cvtsi128_si64(c);
+  auto d __attribute__((unused)) = _mm_cvtsi128_si64(c);
 }
 " HAVE_SSE42)
 IF (HAVE_SSE42)
@@ -174,6 +194,10 @@ ELSE()
   SET(PIC_EXT "")
 ENDIF()
 
+IF(DEFINED WITH_UBSAN)
+  add_definitions(-DROCKSDB_UBSAN_RUN)
+ENDIF()
+
 SET(ROCKSDB_SOURCES
   ha_rocksdb.cc ha_rocksdb.h ha_rocksdb_proto.h
   logger.h
@@ -200,10 +224,6 @@ SET(rocksdb_static_libs ${rocksdb_static_libs} ${ZLIB_LIBRARY} "-lrt")
 MYSQL_ADD_PLUGIN(rocksdb ${ROCKSDB_SOURCES} STORAGE_ENGINE DEFAULT MODULE_ONLY
   LINK_LIBRARIES ${rocksdb_static_libs}
 )
-
-IF(WITH_EMBEDDED_SERVER)
-  ADD_SUBDIRECTORY(unittest)
-ENDIF()
 
 # TODO: read this file list from src.mk:TOOL_SOURCES
 SET(ROCKSDB_TOOL_SOURCES

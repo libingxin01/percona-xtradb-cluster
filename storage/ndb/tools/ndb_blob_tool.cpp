@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2012, 2018, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -18,7 +18,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA */
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
 #include <ndb_global.h>
 #include <ndb_opts.h>
@@ -28,10 +28,10 @@
 #include <NDBT.hpp>
 
 static const char* opt_dbname = 0;
-static my_bool opt_check_orphans = false;
-static my_bool opt_delete_orphans = false;
+static bool opt_check_orphans = false;
+static bool opt_delete_orphans = false;
 static const char* opt_dump_file = 0;
-static my_bool opt_verbose = false;
+static bool opt_verbose = false;
 
 static FILE* g_dump_file = 0;
 static FileOutputStream* g_dump_out = 0;
@@ -134,7 +134,7 @@ doconnect()
   do
   {
     g_ncc = new Ndb_cluster_connection(opt_ndb_connectstring);
-    CHK2(g_ncc->connect(6, 5) == 0, getNdbError(g_ncc));
+    CHK2(g_ncc->connect(opt_connect_retries - 1, opt_connect_retry_delay) == 0, getNdbError(g_ncc));
     CHK2(g_ncc->wait_until_ready(30, 10) == 0, getNdbError(g_ncc));
 
     g_ndb = new Ndb(g_ncc, opt_dbname);
@@ -531,9 +531,6 @@ my_long_options[] =
     GET_NO_ARG, NO_ARG, 0, 0, 0, 0, 0, 0 }
 };
 
-const char*
-load_default_groups[]= { "mysql_cluster", 0 };
-
 static void
 short_usage_sub()
 {
@@ -547,7 +544,6 @@ static void
 usage()
 {
   printf("%s: check and repair blobs\n", my_progname);
-  ndb_usage(short_usage_sub, load_default_groups, my_long_options);
 }
 
 static int
@@ -605,10 +601,10 @@ freeall()
 int
 main(int argc, char** argv)
 {
-  NDB_INIT("ndb_blob_tool");
-  int ret;
+  NDB_INIT(argv[0]);
+  Ndb_opts opts(argc, argv, my_long_options);
   ndb_opt_set_usage_funcs(short_usage_sub, usage);
-  ret = handle_options(&argc, &argv, my_long_options, ndb_std_get_one_option);
+  int ret = opts.handle_options();
   if (ret != 0 || checkopts(argc, argv) != 0)
     return NDBT_ProgramExit(NDBT_WRONGARGS);
 

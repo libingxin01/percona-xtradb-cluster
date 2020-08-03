@@ -44,10 +44,10 @@ exec kill -TERM `cat $mysqld_pid_file`;
 # Test for SIGHUP output
 --let SEARCH_FILE=$test_error_log
 --let SEARCH_PATTERN=Status information:
---source include/search_pattern_in_file.inc
+--source include/search_pattern.inc
 
 # Test for SIGTERM output
 --let SEARCH_PATTERN=mysqld.*: Shutdown complete
---source include/search_pattern_in_file.inc
+--source include/search_pattern.inc
 
 --remove_file $test_error_log

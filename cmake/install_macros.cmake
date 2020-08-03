@@ -1,4 +1,4 @@
-# Copyright (c) 2009, 2017, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2009, 2019, Oracle and/or its affiliates. All rights reserved.
 # 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License, version 2.0,
@@ -18,35 +18,10 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program; if not, write to the Free Software
-# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA 
-
-if(APPLE)
- LIST(APPEND CMAKE_CXX_LINK_EXECUTABLE "dsymutil <TARGET>")
- LIST(APPEND CMAKE_C_LINK_EXECUTABLE "dsymutil <TARGET>")
- LIST(APPEND CMAKE_CXX_CREATE_SHARED_LIBRARY "dsymutil <TARGET>")
- LIST(APPEND CMAKE_C_CREATE_SHARED_LIBRARY "dsymutil <TARGET>")
- LIST(APPEND CMAKE_CXX_CREATE_SHARED_MODULE "dsymutil <TARGET>")
- LIST(APPEND CMAKE_C_CREATE_SHARED_MODULE "dsymutil <TARGET>")
-ENDIF()
+# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA 
 
 GET_FILENAME_COMPONENT(MYSQL_CMAKE_SCRIPT_DIR ${CMAKE_CURRENT_LIST_FILE} PATH)
 INCLUDE(${MYSQL_CMAKE_SCRIPT_DIR}/cmake_parse_arguments.cmake)
-MACRO (INSTALL_DSYM_DIRECTORIES targets)
-  IF(APPLE)
-    FOREACH(target ${targets})
-      GET_TARGET_PROPERTY(location ${target} LOCATION)
-      GET_TARGET_PROPERTY(type ${target} TYPE)
-      # It's a dirty hack, but cmake too stupid and mysql cmake files too buggy */
-      STRING(REGEX REPLACE "/liblibmysql.dylib$" "/libmysqlclient.${SHARED_LIB_MAJOR_VERSION}.dylib" location ${location})
-      IF(DEBUG_EXTNAME)
-        STRING(REGEX REPLACE "/mysqld$" "/mysqld-debug" location ${location})
-      ENDIF()
-      IF(type MATCHES "EXECUTABLE" OR type MATCHES "MODULE" OR type MATCHES "SHARED_LIBRARY")
-        INSTALL(DIRECTORY "${location}.dSYM" DESTINATION ${INSTALL_LOCATION} COMPONENT Debuginfo)
-      ENDIF()
-    ENDFOREACH()
-  ENDIF()
-ENDMACRO()
 
 # For windows: install .pdf file for each target.
 MACRO (INSTALL_DEBUG_SYMBOLS targets)
@@ -66,7 +41,7 @@ MACRO (INSTALL_DEBUG_SYMBOLS targets)
      ENDIF()
     ENDIF()
 
-    IF(target STREQUAL "mysqld")
+    IF(target STREQUAL "mysqld" OR target STREQUAL "mysqlbackup")
       SET(comp Server)
     ELSE()
       SET(comp Debuginfo)
@@ -99,13 +74,23 @@ FUNCTION(INSTALL_SCRIPT)
     SET(COMP)
   ENDIF()
 
-  INSTALL(FILES 
-    ${script}
-    DESTINATION ${ARG_DESTINATION}
-    PERMISSIONS OWNER_READ OWNER_WRITE 
-    OWNER_EXECUTE GROUP_READ GROUP_EXECUTE
-    WORLD_READ WORLD_EXECUTE  ${COMP}
-  )
+  SET(DO_INSTALL_SCRIPT 1)
+  IF(ARG_COMPONENT AND ${ARG_COMPONENT} MATCHES "Server")
+    IF(WITHOUT_SERVER)
+      UNSET(DO_INSTALL_SCRIPT)
+    ENDIF()
+  ENDIF()
+  IF(DO_INSTALL_SCRIPT)
+    INSTALL(FILES
+      ${script}
+      DESTINATION ${ARG_DESTINATION}
+      PERMISSIONS OWNER_READ OWNER_WRITE
+      OWNER_EXECUTE GROUP_READ GROUP_EXECUTE
+      WORLD_READ WORLD_EXECUTE  ${COMP}
+      )
+  ELSE()
+#   MESSAGE(STATUS "skip install of ${script}")
+  ENDIF()
 ENDFUNCTION()
 
 
@@ -133,11 +118,10 @@ FUNCTION(MYSQL_INSTALL_TARGETS)
   INSTALL(TARGETS ${TARGETS} DESTINATION ${ARG_DESTINATION} ${COMP})
   SET(INSTALL_LOCATION ${ARG_DESTINATION} )
   INSTALL_DEBUG_SYMBOLS("${TARGETS}")
-  INSTALL_DSYM_DIRECTORIES("${TARGETS}")
   SET(INSTALL_LOCATION)
 ENDFUNCTION()
 
-# Optionally install mysqld/client/embedded from debug build run.
+# Optionally install mysqld/client from debug build run.
 # outside of the current build dir
 # (unless multi-config generator is used like Visual Studio or Xcode). 
 # For single-config generators like Makefile generators we default Debug
@@ -155,7 +139,7 @@ FUNCTION(INSTALL_DEBUG_TARGET target)
     )
 
   # Relevant only for RelWithDebInfo builds
-  IF(BUILD_IS_SINGLE_CONFIG AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+  IF(BUILD_IS_SINGLE_CONFIG AND CMAKE_BUILD_TYPE_UPPER STREQUAL "DEBUG")
     RETURN()
   ENDIF()
 
@@ -172,67 +156,56 @@ FUNCTION(INSTALL_DEBUG_TARGET target)
   IF(target_type STREQUAL "STATIC_LIBRARY")
     SET(debug_target_location
       "${CMAKE_BINARY_DIR}/archive_output_directory/Debug/${target_name}.lib")
-    # On UNIX we install mysqlserver which has name libmysqld.a
-    IF(UNIX)
-      IF(BUILD_IS_SINGLE_CONFIG)
-        SET(debug_target_location
-          "${DEBUGBUILDDIR}/archive_output_directory/lib${target_name}.a")
-      ELSE()
-        SET(debug_target_location
-          "${CMAKE_BINARY_DIR}/archive_output_directory/Debug/lib${target_name}.a")
-      ENDIF()
-      MESSAGE(STATUS
-        "library target ${target} debug_target ${debug_target_location}")
-    ENDIF()
   # mysqld or mysqld-debug
   ELSEIF(target_type STREQUAL "EXECUTABLE")
-    GET_TARGET_PROPERTY(runtime_output_directory ${target}
-      RUNTIME_OUTPUT_DIRECTORY)
-    IF(NOT runtime_output_directory)
-      MESSAGE(FATAL_ERROR "unknown executable!!")
-    ENDIF()
-
-    STRING(REPLACE
-      "${CMAKE_BINARY_DIR}/" "" RELATIVE_DIR ${runtime_output_directory})
-
     SET(EXE_SUFFIX "${CMAKE_EXECUTABLE_SUFFIX}")
     IF(BUILD_IS_SINGLE_CONFIG)
       SET(debug_target_location
-        "${DEBUGBUILDDIR}/${RELATIVE_DIR}/${target_name}${EXE_SUFFIX}")
+        "${DEBUGBUILDDIR}/runtime_output_directory/${target_name}${EXE_SUFFIX}")
     ELSE()
       SET(debug_target_location
-        "${CMAKE_BINARY_DIR}/${RELATIVE_DIR}/Debug/${target_name}${EXE_SUFFIX}")
+        "${CMAKE_BINARY_DIR}/runtime_output_directory/Debug/${target_name}${EXE_SUFFIX}")
     ENDIF()
-    MESSAGE(STATUS
-      "executable target ${target} debug_target ${debug_target_location}")
-
   # Plugins and components
   ELSEIF(target_type STREQUAL "MODULE_LIBRARY")
     SET(DLL_SUFFIX "${CMAKE_SHARED_LIBRARY_SUFFIX}")
     IF(APPLE)
       SET(DLL_SUFFIX ".so") # we do not use .dylib
     ENDIF()
-    GET_TARGET_PROPERTY(
-      target_output_directory ${target}  LIBRARY_OUTPUT_DIRECTORY)
-    IF(NOT target_output_directory)
-      MESSAGE(FATAL_ERROR "unknown module!!")
-    ENDIF()
 
-    STRING(REPLACE
-      "${CMAKE_BINARY_DIR}/" "" RELATIVE_DIR ${target_output_directory})
-
+    SET(MODULE_DIRECTORY "plugin_output_directory")
     IF(BUILD_IS_SINGLE_CONFIG)
       SET(debug_target_location
-        "${DEBUGBUILDDIR}/${RELATIVE_DIR}/${target_name}${DLL_SUFFIX}")
+        "${DEBUGBUILDDIR}/${MODULE_DIRECTORY}/${target_name}${DLL_SUFFIX}")
     ELSE()
       SET(debug_target_location
-        "${CMAKE_BINARY_DIR}/${RELATIVE_DIR}/Debug/${target_name}${DLL_SUFFIX}")
+        "${CMAKE_BINARY_DIR}/${MODULE_DIRECTORY}/Debug/${target_name}${DLL_SUFFIX}")
     ENDIF()
-    # MESSAGE(STATUS
-    # "module target ${target} debug_target ${debug_target_location}")
+  # libprotobuf-debug libprotobuf-lite-debug
+  ELSEIF(target_type STREQUAL "SHARED_LIBRARY")
+    GET_TARGET_PROPERTY(debug_postfix ${target} DEBUG_POSTFIX)
+    GET_TARGET_PROPERTY(library_version ${target} VERSION)
+
+    IF(BUILD_IS_SINGLE_CONFIG)
+      SET(debug_target_location "${DEBUGBUILDDIR}")
+    ELSE()
+      SET(debug_target_location "${CMAKE_BINARY_DIR}")
+    ENDIF()
+    STRING_APPEND(debug_target_location "/library_output_directory")
+    IF(NOT BUILD_IS_SINGLE_CONFIG)
+      STRING_APPEND(debug_target_location "/Debug")
+    ENDIF()
+    STRING_APPEND(debug_target_location "/${CMAKE_SHARED_LIBRARY_PREFIX}")
+    STRING_APPEND(debug_target_location "${target_name}${debug_postfix}")
+    STRING_APPEND(debug_target_location "${CMAKE_SHARED_LIBRARY_SUFFIX}")
+    IF(NOT WIN32)
+      STRING_APPEND(debug_target_location ".${library_version}")
+    ENDIF()
+
+    MESSAGE(STATUS "INSTALL_DEBUG_TARGET ${debug_target_location}")
   ENDIF()
 
-  # This is only used for mysqld / mysqld-debug / libmysqlserver.a
+  # This is only used for mysqld / mysqld-debug
   IF(ARG_RENAME)
     SET(RENAME_PARAM RENAME ${ARG_RENAME})
   ELSE()
@@ -304,3 +277,111 @@ FUNCTION(INSTALL_DEBUG_TARGET target)
   ENDIF()
 ENDFUNCTION()
 
+
+FUNCTION(INSTALL_PRIVATE_LIBRARY TARGET)
+  IF(APPLE)
+    INSTALL(TARGETS ${TARGET}
+      DESTINATION "${INSTALL_LIBDIR}" COMPONENT SharedLibraries
+      )
+  ELSEIF(WIN32)
+    INSTALL(TARGETS ${TARGET}
+      DESTINATION "${INSTALL_BINDIR}" COMPONENT SharedLibraries
+      )
+  ELSEIF(UNIX)
+    INSTALL(TARGETS ${TARGET}
+      LIBRARY
+      DESTINATION "${INSTALL_PRIV_LIBDIR}"
+      COMPONENT SharedLibraries
+      NAMELINK_SKIP
+      )
+  ENDIF()
+ENDFUNCTION()
+
+
+# On Unix: add to RPATH of an executable when it is installed.
+# Use 'chrpath' to inspect results.
+# For Solaris, use 'elfdump -d'
+MACRO(ADD_INSTALL_RPATH TARGET VALUE)
+  GET_TARGET_PROPERTY(CURRENT_RPATH_${TARGET} ${TARGET} INSTALL_RPATH)
+  IF(NOT CURRENT_RPATH_${TARGET})
+    SET(CURRENT_RPATH_${TARGET})
+  ENDIF()
+  LIST(APPEND CURRENT_RPATH_${TARGET} ${VALUE})
+  SET_TARGET_PROPERTIES(${TARGET}
+    PROPERTIES INSTALL_RPATH "${CURRENT_RPATH_${TARGET}}")
+ENDMACRO()
+
+
+# For standalone Linux build and -DWITH_SSL=</path/to/custom/openssl>
+# SSL libraries are installed in lib/private
+# We need to extend INSTALL_RPATH with location of SSL libraries:
+# executable  in bin        rpath $ORIGIN/../lib/private
+# plugins     in lib/plugin rpath $ORIGIN/../private
+# shared libs in lib        rpath $ORIGIN/private
+MACRO(ADD_INSTALL_RPATH_FOR_OPENSSL TARGET)
+  IF(LINUX_INSTALL_RPATH_ORIGIN)
+    GET_TARGET_PROPERTY(TARGET_TYPE_${TARGET} ${TARGET} TYPE)
+    IF(TARGET_TYPE_${TARGET} STREQUAL "EXECUTABLE")
+      ADD_INSTALL_RPATH(${TARGET} "\$ORIGIN/../${INSTALL_PRIV_LIBDIR}")
+    ELSEIF(TARGET_TYPE_${TARGET} STREQUAL "MODULE_LIBRARY")
+      ADD_INSTALL_RPATH(${TARGET} "\$ORIGIN/../private")
+    ELSEIF(TARGET_TYPE_${TARGET} STREQUAL "SHARED_LIBRARY")
+      ADD_INSTALL_RPATH(${TARGET} "\$ORIGIN/private")
+    ELSE()
+      MESSAGE(FATAL_ERROR "unknown type ${TARGET_TYPE_${TARGET}} for ${TARGET}")
+    ENDIF()
+  ENDIF()
+ENDMACRO()
+
+# For APPLE: set INSTALL_RPATH, and adjust path dependecy for libprotobuf.
+# Use 'otool -L' to inspect results.
+# For UNIX: extend INSTALL_RPATH with libprotobuf location.
+MACRO(ADD_INSTALL_RPATH_FOR_PROTOBUF TARGET)
+  IF(APPLE)
+    SET_PROPERTY(TARGET ${TARGET} PROPERTY INSTALL_RPATH "@loader_path")
+    # install_name_tool [-change old new] input
+    # Changing it to @loader_path/../lib/ works in build sandbox
+    # because we have a symlink to ./library_output_directory.
+    ADD_CUSTOM_COMMAND(TARGET ${TARGET} POST_BUILD
+      COMMAND install_name_tool -change
+      "@rpath/$<TARGET_FILE_NAME:libprotobuf-lite>"
+      "@loader_path/../lib/$<TARGET_FILE_NAME:libprotobuf-lite>"
+      "$<TARGET_FILE:${TARGET}>"
+      COMMAND install_name_tool -change
+      "@rpath/$<TARGET_FILE_NAME:libprotobuf>"
+      "@loader_path/../lib/$<TARGET_FILE_NAME:libprotobuf>"
+      "$<TARGET_FILE:${TARGET}>"
+      )
+  ELSEIF(UNIX)
+    ADD_INSTALL_RPATH(${TARGET} "\$ORIGIN/../${INSTALL_PRIV_LIBDIR}")
+  ENDIF()
+ENDMACRO()
+
+# For APPLE: adjust path dependecy for SSL shared libraries.
+FUNCTION(SET_PATH_TO_SSL target target_out_dir)
+  IF(APPLE AND HAVE_CRYPTO_DYLIB AND HAVE_OPENSSL_DYLIB)
+    IF(BUILD_IS_SINGLE_CONFIG)
+      ADD_CUSTOM_COMMAND(TARGET ${target} POST_BUILD
+        COMMAND install_name_tool -change
+              "${CRYPTO_VERSION}" "@loader_path/../lib/${CRYPTO_VERSION}"
+              $<TARGET_FILE_NAME:${target}>
+        COMMAND install_name_tool -change
+              "${OPENSSL_VERSION}" "@loader_path/../lib/${OPENSSL_VERSION}"
+              $<TARGET_FILE_NAME:${target}>
+        WORKING_DIRECTORY ${target_out_dir}
+      )
+    ELSE()
+      ADD_CUSTOM_COMMAND(TARGET ${target} POST_BUILD
+        COMMAND install_name_tool -change
+            "${CRYPTO_VERSION}"
+            "@loader_path/../../lib/${CMAKE_CFG_INTDIR}/${CRYPTO_VERSION}"
+        $<TARGET_FILE_NAME:${target}>
+        COMMAND install_name_tool -change
+            "${OPENSSL_VERSION}"
+            "@loader_path/../../lib/${CMAKE_CFG_INTDIR}/${OPENSSL_VERSION}"
+        $<TARGET_FILE_NAME:${target}>
+        WORKING_DIRECTORY ${target_out_dir}/${CMAKE_CFG_INTDIR}
+      )
+    ENDIF()
+  ENDIF()
+ENDFUNCTION()

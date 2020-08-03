@@ -1,4 +1,3 @@
---source include/not_embedded.inc
 --source include/have_ndb.inc
 
 USE ndbinfo;
@@ -29,8 +28,10 @@ DROP TABLE ndbinfo.ndb$nodes;
 --error ER_VIEW_INVALID
 SELECT COUNT(*) FROM nodes;
 
-let $log_file = $MYSQLTEST_VARDIR/tmp/ndbinfo_upgrade_check.log;
---exec $MYSQL_UPGRADE --skip-verbose > $log_file 2>&1
+--let $restart_parameters= restart:--upgrade=FORCE
+--let $mysqld_name=mysqld.1.1
+--let $wait_counter= 10000
+--source include/restart_mysqld.inc
 
 # The underlying table should have been created and nodes view be readable
 SELECT COUNT(*) FROM nodes;

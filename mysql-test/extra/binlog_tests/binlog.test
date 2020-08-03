@@ -3,8 +3,6 @@
 #
 
 -- source include/have_log_bin.inc
--- source include/not_embedded.inc
--- source include/have_innodb.inc
 -- source include/have_debug.inc
 
 RESET MASTER;
@@ -227,8 +225,8 @@ create table if not exists t3 like tt1;
 
 --disable_warnings
 USE mysql;
-INSERT IGNORE INTO user SET host='localhost', user='@#@', authentication_string=password('Just a test');
-UPDATE user SET authentication_string=password('Another password') WHERE host='localhost' AND user='@#@';
+INSERT IGNORE INTO user SET host='localhost', user='@#@', authentication_string='*1111111111111111111111111111111111111111';
+UPDATE user SET authentication_string='*67092806AE91BFB6BE72DE6C7BE2B7CCA8CFA9DF' WHERE host='localhost' AND user='@#@';
 DELETE FROM user WHERE host='localhost' AND user='@#@';
 --enable_warnings
 
@@ -334,8 +332,7 @@ dfLtTBcBAAAAIgAAAPkAAAAAABcAAAAAAAcAAf/+AQAAAA==
 
 SELECT * FROM t1;
 --echo # Their values should be ON
-SHOW SESSION VARIABLES LIKE "foreign_key_checks";
-SHOW SESSION VARIABLES LIKE "unique_checks";
+SHOW SESSION VARIABLES LIKE "%_checks";
 
 --echo
 SET @@SESSION.foreign_key_checks= OFF;
@@ -350,13 +347,12 @@ dfLtTBcBAAAAIgAAAM0BAAAAABcAAAAAAAEAAf/+AgAAAA==
 
 SELECT * FROM t1;
 --echo # Their values should be OFF
-SHOW SESSION VARIABLES LIKE "foreign_key_checks";
-SHOW SESSION VARIABLES LIKE "unique_checks";
+SHOW SESSION VARIABLES LIKE "%_checks";
 
 --echo # INSERT INTO t1 VALUES(2)
 --echo # foreign_key_checks=1 and unique_checks=1
 --echo # It should not change current session's variables, even error happens
-call mtr.add_suppression("Slave SQL.*Could not execute Write_rows_v1 event on table test.t1; Duplicate entry .2. for key .PRIMARY., Error_code: 1062");
+call mtr.add_suppression("Slave SQL.*Could not execute Write_rows_v1 event on table test.t1; Duplicate entry .2. for key .t1.PRIMARY., Error_code: 1062"); 
 --error 1062
 BINLOG '
 dfLtTBMBAAAAKQAAAKsBAAAAABcAAAAAAAEABHRlc3QAAnQxAAEDAAE=
@@ -365,8 +361,7 @@ dfLtTBcBAAAAIgAAAM0BAAAAABcAAAAAAAEAAf/+AgAAAA==
 
 SELECT * FROM t1;
 --echo # Their values should be OFF
-SHOW SESSION VARIABLES LIKE "foreign_key_checks";
-SHOW SESSION VARIABLES LIKE "unique_checks";
+SHOW SESSION VARIABLES LIKE "%_checks";
 
 DROP TABLE t1;
 

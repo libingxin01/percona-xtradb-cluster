@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2012, 2014, Oracle and/or its affiliates. All rights reserved.
+   Copyright (c) 2012, 2018, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -32,6 +32,7 @@ public class NdbRecordUniqueKeyOperationImpl extends NdbRecordOperationImpl impl
 
     public NdbRecordUniqueKeyOperationImpl(ClusterTransactionImpl clusterTransaction, Index storeIndex, Table storeTable) {
         super(clusterTransaction, storeTable);
+        this.valueBuffer = ndbRecordValues.newBuffer();
         this.ndbRecordKeys = clusterTransaction.getCachedNdbRecordImpl(storeIndex, storeTable);
         this.keyBufferSize = ndbRecordKeys.getBufferSize();
         // allocate a buffer for the key data
@@ -53,7 +54,9 @@ public class NdbRecordUniqueKeyOperationImpl extends NdbRecordOperationImpl impl
         clusterTransaction.postExecuteCallback(new Runnable() {
             public void run() {
                 freeResourcesAfterExecute();
-                loadBlobValues();
+                if (ndbOperation.getNdbError().code() == 0) {
+                    loadBlobValues();
+                }
             }
         });
     }

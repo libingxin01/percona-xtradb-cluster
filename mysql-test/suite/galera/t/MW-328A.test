@@ -20,6 +20,8 @@
 --let $successes = 0
 --let $deadlocks = 0
 
+--let $wait_condition = SELECT COUNT(*) = 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 't2'
+
 SET SESSION wsrep_retry_autocommit = 0;
 
 --disable_query_log
@@ -70,8 +72,9 @@ UPDATE t1 SET j=2 WHERE i=1;
 COMMIT;
 
 SELECT * FROM t1;
+
 --connection node_2
 SELECT * FROM t1;
---connection node_1
 
+--connection node_1
 DROP TABLE t1;

@@ -1,4 +1,4 @@
-/* Copyright (c) 2000, 2014, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2000, 2019, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -17,29 +17,25 @@
    GNU General Public License, version 2.0, for more details.
 
    You should have received a copy of the GNU General Public License
-   along with this program; if not, write to the Free Software Foundation,
-   51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA */
-
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
 /* Procedures (functions with changes output of select) */
 
-#include "procedure.h"
-#include "sql_analyse.h"			// Includes procedure
+#include "sql/procedure.h"
 
-my_decimal *Item_proc_string::val_decimal(my_decimal *decimal_value)
-{
-  if (null_value)
-    return 0;
-  string2my_decimal(E_DEC_FATAL_ERROR, &str_value, decimal_value);
+#include "decimal.h"
+#include "sql/my_decimal.h"
+
+my_decimal *Item_proc_string::val_decimal(my_decimal *decimal_value) {
+  if (null_value) return 0;
+  str2my_decimal(E_DEC_FATAL_ERROR, str_value.ptr(), str_value.length(),
+                 str_value.charset(), decimal_value);
   return (decimal_value);
 }
 
-
-my_decimal *Item_proc_int::val_decimal(my_decimal *decimal_value)
-{
-  if (null_value)
-    return 0;
+my_decimal *Item_proc_int::val_decimal(my_decimal *decimal_value) {
+  if (null_value) return 0;
   int2my_decimal(E_DEC_FATAL_ERROR, value, unsigned_flag, decimal_value);
   return (decimal_value);
 }
-

@@ -38,7 +38,7 @@ extern std::atomic<uint64_t> rocksdb_num_sst_entry_delete;
 extern std::atomic<uint64_t> rocksdb_num_sst_entry_singledelete;
 extern std::atomic<uint64_t> rocksdb_num_sst_entry_merge;
 extern std::atomic<uint64_t> rocksdb_num_sst_entry_other;
-extern my_bool rocksdb_compaction_sequential_deletes_count_sd;
+extern bool rocksdb_compaction_sequential_deletes_count_sd;
 
 struct Rdb_compact_params {
   uint64_t m_deletes, m_window, m_file_size;
@@ -54,7 +54,7 @@ struct Rdb_index_stats {
   int64_t m_entry_deletes, m_entry_single_deletes;
   int64_t m_entry_merges, m_entry_others;
   std::vector<int64_t> m_distinct_keys_per_prefix;
-  std::string m_name; // name is not persisted
+  std::string m_name;  // name is not persisted
 
   static std::string materialize(const std::vector<Rdb_index_stats> &stats);
   static int unmaterialize(const std::string &s,
@@ -105,7 +105,7 @@ class Rdb_tbl_card_coll {
 };
 
 class Rdb_tbl_prop_coll : public rocksdb::TablePropertiesCollector {
-public:
+ public:
   Rdb_tbl_prop_coll(Rdb_ddl_manager *const ddl_manager,
                     const Rdb_compact_params &params, const uint32_t &cf_id,
                     const uint8_t &table_stats_sampling_pct);
@@ -129,14 +129,14 @@ public:
 
   bool NeedCompact() const override;
 
-public:
+ public:
   uint64_t GetMaxDeletedRows() const { return m_max_deleted_rows; }
 
   static void read_stats_from_tbl_props(
       const std::shared_ptr<const rocksdb::TableProperties> &table_props,
       std::vector<Rdb_index_stats> *out_stats_vector);
 
-private:
+ private:
   static std::string GetReadableStats(const Rdb_index_stats &it);
 
   bool ShouldCollectStats();
@@ -147,7 +147,7 @@ private:
   Rdb_index_stats *AccessStats(const rocksdb::Slice &key);
   void AdjustDeletedRows(rocksdb::EntryType type);
 
-private:
+ private:
   uint32_t m_cf_id;
   std::shared_ptr<const Rdb_key_def> m_keydef;
   Rdb_ddl_manager *m_ddl_manager;
@@ -169,7 +169,7 @@ private:
 
 class Rdb_tbl_prop_coll_factory
     : public rocksdb::TablePropertiesCollectorFactory {
-public:
+ public:
   Rdb_tbl_prop_coll_factory(const Rdb_tbl_prop_coll_factory &) = delete;
   Rdb_tbl_prop_coll_factory &
   operator=(const Rdb_tbl_prop_coll_factory &) = delete;
@@ -192,7 +192,7 @@ public:
     return "Rdb_tbl_prop_coll_factory";
   }
 
-public:
+ public:
   void SetCompactionParams(const Rdb_compact_params &params) {
     m_params = params;
   }
@@ -201,10 +201,10 @@ public:
     m_table_stats_sampling_pct = table_stats_sampling_pct;
   }
 
-private:
+ private:
   Rdb_ddl_manager *const m_ddl_manager;
   Rdb_compact_params m_params;
   uint8_t m_table_stats_sampling_pct;
 };
 
-} // namespace myrocks
+}  // namespace myrocks

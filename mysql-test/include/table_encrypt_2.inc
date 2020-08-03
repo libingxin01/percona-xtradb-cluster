@@ -104,7 +104,7 @@ DROP DATABASE tde_db;
 
 --let SEARCH_FILE=$MYSQL_TMP_DIR/keyring_query_log
 let SEARCH_PATTERN= ALTER INSTANCE ROTATE INNODB MASTER KEY;
---source include/search_pattern_in_file.inc
+--source include/search_pattern.inc
 
 --echo # Loading tables from mysqlpump_encrypt.sql
 --exec $MYSQL --skip-comments < $MYSQL_TMP_DIR/mysqlpump_encrypt.sql
@@ -113,6 +113,31 @@ INSERT INTO tde_db.t1 VALUES(4, null);
 SELECT * FROM tde_db.t1 LIMIT 10;
 DROP DATABASE tde_db;
 #
+
+
+--echo #
+--echo # Bug #26634507  CREATE_OPTIONS FLD IN INFORMATION_SCHEMA.TABLES NOT
+--echo # FILLING PROPERLY.
+--echo # The CREATE_OPTIONS field from I_S.TABLES should show the option
+--echo # 'ENCRYPTION='.
+--echo #
+
+CREATE TABLE not_encrypted1 (col1 INT) ENCRYPTION='n';
+CREATE TABLE not_encrypted2 (col1 INT) ENCRYPTION='N';
+CREATE TABLE encrypted1 (col1 INT) ENCRYPTION='y';
+CREATE TABLE encrypted2 (col1 INT) ENCRYPTION='Y';
+
+SELECT TABLE_SCHEMA, TABLE_NAME, CREATE_OPTIONS
+  FROM INFORMATION_SCHEMA.TABLES
+  WHERE TABLE_NAME like '%encrypted%'
+  ORDER BY TABLE_NAME;
+
+DROP TABLE encrypted1;
+DROP TABLE not_encrypted1;
+DROP TABLE encrypted2;
+DROP TABLE not_encrypted2;
+
+
 
 # Cleanup
 --remove_file $MYSQL_TMP_DIR/keyring_query_log

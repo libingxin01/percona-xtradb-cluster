@@ -1,8 +1,5 @@
 # Test Parallel double write buffer encryption
 
---source include/have_innodb.inc
---source include/not_embedded.inc
-
 --let $MYSQLD_DATADIR=`SELECT @@datadir`
 
 CREATE TABLE t1(a TEXT) ENCRYPTION='Y';

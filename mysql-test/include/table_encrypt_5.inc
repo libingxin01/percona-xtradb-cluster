@@ -14,24 +14,27 @@
 # InnoDB transparent tablespace data encryption
 
 --source include/no_valgrind_without_big.inc
---source include/have_innodb.inc
---source include/not_embedded.inc
 
 # Suppress warnings
---disable_query_log
-call mtr.add_suppression("\\[ERROR\\] InnoDB: Encryption can't find master key, please check the keyring plugin is loaded.");
-call mtr.add_suppression("ibd can't be decrypted");
-call mtr.add_suppression("InnoDB: Operating system error number");
+-- disable_query_log
+call mtr.add_suppression("Can't generate new master key for tablespace encryption, please check the keyring plugin is loaded.");
+call mtr.add_suppression("Operating system error number");
 call mtr.add_suppression("The error means the system cannot find the path specified");
-call mtr.add_suppression("InnoDB: If you are installing InnoDB, remember that you must create directories yourself, InnoDB does not create them");
+call mtr.add_suppression("If you are installing InnoDB, remember that you must create directories yourself, InnoDB does not create them");
 call mtr.add_suppression("Could not find a valid tablespace file");
-call mtr.add_suppression("InnoDB: Ignoring tablespace");
-call mtr.add_suppression("InnoDB: Failed to find tablespace for table");
-call mtr.add_suppression("InnoDB: Cannot open table tde_db/t_encrypt.* from the internal data dictionary of InnoDB though the .frm file for the table exists");
-call mtr.add_suppression("\\[ERROR\\] InnoDB: Table tde_db/t_encrypt.* in the InnoDB data dictionary has tablespace id .*, but tablespace with that id or name does not exist");
-call mtr.add_suppression("\\[Warning\\] InnoDB: Please refer to .* for how to resolve the issue");
-call mtr.add_suppression("Error while loading keyring content. The keyring might be malformed");
---enable_query_log
+call mtr.add_suppression("Ignoring tablespace");
+call mtr.add_suppression("Failed to find tablespace for table");
+call mtr.add_suppression("Cannot open table tde_db/t_encrypt.* from the internal data dictionary of InnoDB though the .frm file for the table exists");
+call mtr.add_suppression("\\[Warning\\] .* Please refer to .* for how to resolve the issue");
+call mtr.add_suppression("\\[ERROR\\] .* Encryption can't find master key, please check the keyring plugin is loaded");
+call mtr.add_suppression("\\[ERROR\\] .* Encryption information in datafile: .* can't be decrypted, please confirm the keyfile is match and keyring plugin is loaded");
+call mtr.add_suppression("\\[ERROR\\] .* Table tde_db/t_encrypt.* in the InnoDB data dictionary has tablespace id .*, but tablespace with that id or name does not exist");
+call mtr.add_suppression("\\[ERROR\\] .* Plugin keyring_file reported: 'Could not create keyring directory");
+call mtr.add_suppression("\\[ERROR\\] .* Plugin keyring_file reported: 'keyring_file initialization failure.");
+call mtr.add_suppression("\\[ERROR\\] .* Plugin keyring_file reported: 'File .*keyring' not found .*");
+call mtr.add_suppression("\\[ERROR\\] .* Tablespace [0-9]+, name 'tde_db.*t_encrypt.*', unable to open file '.*tde_db.*t_encrypt.*.ibd' - Data structure corruption");
+call mtr.add_suppression("\\[ERROR\\] .* Check keyring plugin fail, please check the keyring plugin is loaded.");
+-- enable_query_log
 
 let $innodb_file_per_table = `SELECT @@innodb_file_per_table`;
 
@@ -61,7 +64,7 @@ begin
                        c4 JSON , 
                        c5 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_a')) STORED,
                        c6 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_b')) VIRTUAL,
-                       c7 POINT NOT NULL,
+                       c7 POINT NOT NULL SRID 0,
                        spatial INDEX idx2 (c7)    
                        ) ENCRYPTION="Y"  ENGINE = InnoDB;
 
@@ -71,7 +74,7 @@ begin
                        c4 JSON ,
                        c5 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_a')) STORED,
                        c6 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_b')) VIRTUAL,
-                       c7 POINT NOT NULL,
+                       c7 POINT NOT NULL SRID 0,
                        spatial INDEX idx2 (c7)
                        )  ENGINE = InnoDB;
 
@@ -100,7 +103,7 @@ begin
                        c4 JSON ,
                        c5 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_a')) STORED,
                        c6 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_b')) VIRTUAL,
-                       c7 POINT NOT NULL,
+                       c7 POINT NOT NULL SRID 0,
                        spatial INDEX idx2 (c7)
                        )  ENCRYPTION="Y" ENGINE = InnoDB;
    CREATE TABLE tde_db.t_non_encrypt_2(c2 INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -108,7 +111,7 @@ begin
                        c4 JSON ,
                        c5 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_a')) STORED,
                        c6 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_b')) VIRTUAL,
-                       c7 POINT NOT NULL,
+                       c7 POINT NOT NULL SRID 0,
                        spatial INDEX idx2 (c7)
                        )  ENGINE = InnoDB;
    /*  insert into encrypt table 2 */
@@ -160,7 +163,7 @@ CREATE TABLE tde_db.t_encrypt_3(c2 INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
                        c4 JSON ,
                        c5 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_a')) STORED,
                        c6 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_b')) VIRTUAL,
-                       c7 POINT NOT NULL,
+                       c7 POINT NOT NULL SRID 0,
                        spatial INDEX idx2 (c7)
                        )  ENCRYPTION="Y" ENGINE = InnoDB;
 --echo # new non encrypt table 
@@ -169,7 +172,7 @@ CREATE TABLE tde_db.t_non_encrypt_3(c2 INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
                        c4 JSON ,
                        c5 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_a')) STORED,
                        c6 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_b')) VIRTUAL,
-                       c7 POINT NOT NULL,
+                       c7 POINT NOT NULL SRID 0,
                        spatial INDEX idx2 (c7)
                        )  ENGINE = InnoDB;
 
@@ -228,7 +231,7 @@ CREATE TABLE tde_db.t_encrypt_4(c2 INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
                        c4 JSON ,
                        c5 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_a')) STORED,
                        c6 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_b')) VIRTUAL,
-                       c7 POINT NOT NULL,
+                       c7 POINT NOT NULL SRID 0,
                        spatial INDEX idx2 (c7)
                        )  ENCRYPTION="Y" ENGINE = InnoDB;
 CREATE TABLE tde_db.t_non_encrypt_4(c2 INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -236,7 +239,7 @@ CREATE TABLE tde_db.t_non_encrypt_4(c2 INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
                        c4 JSON ,
                        c5 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_a')) STORED,
                        c6 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_b')) VIRTUAL,
-                       c7 POINT NOT NULL,
+                       c7 POINT NOT NULL SRID 0,
                        spatial INDEX idx2 (c7)
                        )  ENGINE = InnoDB;
 
@@ -292,7 +295,7 @@ CREATE TABLE tde_db.t_non_encrypt_4(c2 INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
                        c4 JSON ,
                        c5 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_a')) STORED,
                        c6 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_b')) VIRTUAL,
-                       c7 POINT NOT NULL,
+                       c7 POINT NOT NULL SRID 0,
                        spatial INDEX idx2 (c7)
                        )  ENCRYPTION="Y" ENGINE = InnoDB;
 
@@ -302,7 +305,7 @@ CREATE TABLE tde_db.t_non_encrypt_4(c2 INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
                        c4 JSON ,
                        c5 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_a')) STORED,
                        c6 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_b')) VIRTUAL,
-                       c7 POINT NOT NULL,
+                       c7 POINT NOT NULL SRID 0,
                        spatial INDEX idx2 (c7)
                        )  ENGINE = InnoDB;
 
@@ -350,7 +353,7 @@ begin
                        c4 JSON , 
                        c5 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_a')) STORED,
                        c6 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_b')) VIRTUAL,
-                       c7 POINT NOT NULL,
+                       c7 POINT NOT NULL SRID 0,
                        spatial INDEX idx2 (c7)    
                        ) ENCRYPTION="Y"  ENGINE = InnoDB;
 
@@ -360,7 +363,7 @@ begin
                        c4 JSON ,
                        c5 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_a')) STORED,
                        c6 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_b')) VIRTUAL,
-                       c7 POINT NOT NULL,
+                       c7 POINT NOT NULL SRID 0,
                        spatial INDEX idx2 (c7)
                        )  ENGINE = InnoDB;
 
@@ -389,7 +392,7 @@ begin
                        c4 JSON ,
                        c5 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_a')) STORED,
                        c6 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_b')) VIRTUAL,
-                       c7 POINT NOT NULL,
+                       c7 POINT NOT NULL SRID 0,
                        spatial INDEX idx2 (c7)
                        )  ENCRYPTION="Y" ENGINE = InnoDB;
    CREATE TABLE tde_db.t_non_encrypt_2(c2 INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -397,7 +400,7 @@ begin
                        c4 JSON ,
                        c5 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_a')) STORED,
                        c6 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_b')) VIRTUAL,
-                       c7 POINT NOT NULL,
+                       c7 POINT NOT NULL SRID 0,
                        spatial INDEX idx2 (c7)
                        )  ENGINE = InnoDB;
    /*  insert into encrypt table 2 */
@@ -422,11 +425,8 @@ eval SELECT PLUGIN_NAME,PLUGIN_VERSION,PLUGIN_STATUS FROM INFORMATION_SCHEMA.PLU
 eval $select_keyring_variable_statement;
 --echo # init tables
 call tde_db.init_setup();
---echo # restart without --early-plugin-load (still need to provide with
---echo # keyring_file_data otherwise it would point to default location which might be
---echo # non-writable to mtr). Instead explicitly install plugin to access old table
-let $restart_parameters = restart: --loose-keyring_file_data=$MYSQL_TMP_DIR/mydummy_keyring;
---replace_result $MYSQL_TMP_DIR MYSQL_TMP_DIR $MYSQLTEST_VARDIR MYSQLTEST_VARDIR
+let $restart_parameters = $keyring_setup_without_plugin_param;
+--let $restart_hide_args= 1
 --source include/restart_mysqld.inc
 
 --echo # Install keyring plugin
@@ -477,7 +477,7 @@ CREATE TABLE tde_db.t_encrypt_4(c2 INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
                        c4 JSON ,
                        c5 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_a')) STORED,
                        c6 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_b')) VIRTUAL,
-                       c7 POINT NOT NULL,
+                       c7 POINT NOT NULL SRID 0,
                        spatial INDEX idx2 (c7)
                        )  ENCRYPTION="Y" ENGINE = InnoDB;
 CREATE TABLE tde_db.t_non_encrypt_4(c2 INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -485,7 +485,7 @@ CREATE TABLE tde_db.t_non_encrypt_4(c2 INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
                        c4 JSON ,
                        c5 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_a')) STORED,
                        c6 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_b')) VIRTUAL,
-                       c7 POINT NOT NULL,
+                       c7 POINT NOT NULL SRID 0,
                        spatial INDEX idx2 (c7)
                        )  ENGINE = InnoDB;
 
@@ -518,7 +518,7 @@ CREATE TABLE tde_db.t_encrypt_4(c2 INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
                        c4 JSON ,
                        c5 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_a')) STORED,
                        c6 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_b')) VIRTUAL,
-                       c7 POINT NOT NULL,
+                       c7 POINT NOT NULL SRID 0,
                        spatial INDEX idx2 (c7)
                        )  ENCRYPTION="Y" ENGINE = InnoDB;
 
@@ -557,7 +557,7 @@ CREATE TABLE tde_db.t_encrypt_4(c2 INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
                        c4 JSON ,
                        c5 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_a')) STORED,
                        c6 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_b')) VIRTUAL,
-                       c7 POINT NOT NULL,
+                       c7 POINT NOT NULL SRID 0,
                        spatial INDEX idx2 (c7)
                        )  ENCRYPTION="Y" ENGINE = InnoDB;
 
@@ -567,7 +567,7 @@ CREATE TABLE tde_db.t_non_encrypt_4(c2 INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
                        c4 JSON ,
                        c5 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_a')) STORED,
                        c6 INT GENERATED ALWAYS AS (JSON_EXTRACT(c4,'$.key_b')) VIRTUAL,
-                       c7 POINT NOT NULL,
+                       c7 POINT NOT NULL SRID 0,
                        spatial INDEX idx2 (c7)
                        )  ENGINE = InnoDB;
 
@@ -579,9 +579,9 @@ SELECT COUNT(*) FROM tde_db.t_non_encrypt_4;
 ALTER INSTANCE ROTATE INNODB MASTER KEY;
 
 --echo # old encrypt table not accessible 
---error ER_CANNOT_FIND_KEY_IN_KEYRING,1146
+--error ER_CANNOT_FIND_KEY_IN_KEYRING, ER_NO_SUCH_TABLE
 SELECT COUNT(*) FROM tde_db.t_encrypt;
---error ER_CANNOT_FIND_KEY_IN_KEYRING,1146
+--error ER_CANNOT_FIND_KEY_IN_KEYRING, ER_NO_SUCH_TABLE
 SELECT COUNT(*) FROM tde_db.t_encrypt_2;
 --echo # NON encrypt old table are accessible
 SELECT COUNT(*) FROM tde_db.t_non_encrypt;

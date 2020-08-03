@@ -22,9 +22,11 @@
 #include <vector>
 
 /* MySQL header files */
+#include "mysql/plugin.h"
 #include "sql_string.h" /* for now this must violate clang-format style as it */
                         /* is needed before sql_show.h */
-#include "sql_show.h"
+#include "sql/sql_show.h"
+#include "sql/table.h"  // ST_FIELD_INFO
 
 /* RocksDB header files */
 #include "rocksdb/compaction_filter.h"
@@ -60,7 +62,7 @@ namespace myrocks {
  */
 namespace RDB_CFSTATS_FIELD {
 enum { CF_NAME = 0, STAT_TYPE, VALUE };
-} // namespace RDB_CFSTATS_FIELD
+}  // namespace RDB_CFSTATS_FIELD
 
 static ST_FIELD_INFO rdb_i_s_cfstats_fields_info[] = {
     ROCKSDB_FIELD_INFO("CF_NAME", NAME_LEN + 1, MYSQL_TYPE_STRING, 0),
@@ -68,10 +70,9 @@ static ST_FIELD_INFO rdb_i_s_cfstats_fields_info[] = {
     ROCKSDB_FIELD_INFO("VALUE", sizeof(uint64_t), MYSQL_TYPE_LONGLONG, 0),
     ROCKSDB_FIELD_INFO_END};
 
-static int rdb_i_s_cfstats_fill_table(my_core::THD *const thd,
-                                      my_core::TABLE_LIST *const tables,
-                                      my_core::Item *const cond
-                                      MY_ATTRIBUTE((__unused__))) {
+static int rdb_i_s_cfstats_fill_table(
+    my_core::THD *const thd, my_core::TABLE_LIST *const tables,
+    my_core::Item *const cond MY_ATTRIBUTE((__unused__))) {
   DBUG_ENTER_FUNC();
 
   DBUG_ASSERT(tables != nullptr);
@@ -164,17 +165,16 @@ static int rdb_i_s_cfstats_init(void *p) {
  */
 namespace RDB_DBSTATS_FIELD {
 enum { STAT_TYPE = 0, VALUE };
-} // namespace RDB_DBSTATS_FIELD
+}  // namespace RDB_DBSTATS_FIELD
 
 static ST_FIELD_INFO rdb_i_s_dbstats_fields_info[] = {
     ROCKSDB_FIELD_INFO("STAT_TYPE", NAME_LEN + 1, MYSQL_TYPE_STRING, 0),
     ROCKSDB_FIELD_INFO("VALUE", sizeof(uint64_t), MYSQL_TYPE_LONGLONG, 0),
     ROCKSDB_FIELD_INFO_END};
 
-static int rdb_i_s_dbstats_fill_table(my_core::THD *const thd,
-                                      my_core::TABLE_LIST *const tables,
-                                      my_core::Item *const cond
-                                      MY_ATTRIBUTE((__unused__))) {
+static int rdb_i_s_dbstats_fill_table(
+    my_core::THD *const thd, my_core::TABLE_LIST *const tables,
+    my_core::Item *const cond MY_ATTRIBUTE((__unused__))) {
   DBUG_ENTER_FUNC();
 
   DBUG_ASSERT(tables != nullptr);
@@ -265,7 +265,7 @@ static int rdb_i_s_dbstats_init(void *const p) {
  */
 namespace RDB_PERF_CONTEXT_FIELD {
 enum { TABLE_SCHEMA = 0, TABLE_NAME, PARTITION_NAME, STAT_TYPE, VALUE };
-} // namespace RDB_PERF_CONTEXT_FIELD
+}  // namespace RDB_PERF_CONTEXT_FIELD
 
 static ST_FIELD_INFO rdb_i_s_perf_context_fields_info[] = {
     ROCKSDB_FIELD_INFO("TABLE_SCHEMA", NAME_LEN + 1, MYSQL_TYPE_STRING, 0),
@@ -276,10 +276,9 @@ static ST_FIELD_INFO rdb_i_s_perf_context_fields_info[] = {
     ROCKSDB_FIELD_INFO("VALUE", sizeof(uint64_t), MYSQL_TYPE_LONGLONG, 0),
     ROCKSDB_FIELD_INFO_END};
 
-static int rdb_i_s_perf_context_fill_table(my_core::THD *const thd,
-                                           my_core::TABLE_LIST *const tables,
-                                           my_core::Item *const cond
-                                           MY_ATTRIBUTE((__unused__))) {
+static int rdb_i_s_perf_context_fill_table(
+    my_core::THD *const thd, my_core::TABLE_LIST *const tables,
+    my_core::Item *const cond MY_ATTRIBUTE((__unused__))) {
   DBUG_ENTER_FUNC();
 
   DBUG_ASSERT(thd != nullptr);
@@ -375,7 +374,7 @@ static int rdb_i_s_perf_context_init(void *const p) {
  */
 namespace RDB_PERF_CONTEXT_GLOBAL_FIELD {
 enum { STAT_TYPE = 0, VALUE };
-} // namespace RDB_PERF_CONTEXT_GLOBAL_FIELD
+}  // namespace RDB_PERF_CONTEXT_GLOBAL_FIELD
 
 static ST_FIELD_INFO rdb_i_s_perf_context_global_fields_info[] = {
     ROCKSDB_FIELD_INFO("STAT_TYPE", NAME_LEN + 1, MYSQL_TYPE_STRING, 0),
@@ -449,7 +448,7 @@ static int rdb_i_s_perf_context_global_init(void *const p) {
  */
 namespace RDB_CFOPTIONS_FIELD {
 enum { CF_NAME = 0, OPTION_TYPE, VALUE };
-} // namespace RDB_CFOPTIONS_FIELD
+}  // namespace RDB_CFOPTIONS_FIELD
 
 static ST_FIELD_INFO rdb_i_s_cfoptions_fields_info[] = {
     ROCKSDB_FIELD_INFO("CF_NAME", NAME_LEN + 1, MYSQL_TYPE_STRING, 0),
@@ -457,10 +456,9 @@ static ST_FIELD_INFO rdb_i_s_cfoptions_fields_info[] = {
     ROCKSDB_FIELD_INFO("VALUE", NAME_LEN + 1, MYSQL_TYPE_STRING, 0),
     ROCKSDB_FIELD_INFO_END};
 
-static int rdb_i_s_cfoptions_fill_table(my_core::THD *const thd,
-                                        my_core::TABLE_LIST *const tables,
-                                        my_core::Item *const cond
-                                        MY_ATTRIBUTE((__unused__))) {
+static int rdb_i_s_cfoptions_fill_table(
+    my_core::THD *const thd, my_core::TABLE_LIST *const tables,
+    my_core::Item *const cond MY_ATTRIBUTE((__unused__))) {
   DBUG_ENTER_FUNC();
 
   DBUG_ASSERT(thd != nullptr);
@@ -757,10 +755,9 @@ static int rdb_global_info_fill_row(my_core::THD *const thd,
   return my_core::schema_table_store_record(thd, tables->table);
 }
 
-static int rdb_i_s_global_info_fill_table(my_core::THD *const thd,
-                                          my_core::TABLE_LIST *const tables,
-                                          my_core::Item *const cond
-                                          MY_ATTRIBUTE((__unused__))) {
+static int rdb_i_s_global_info_fill_table(
+    my_core::THD *const thd, my_core::TABLE_LIST *const tables,
+    my_core::Item *const cond MY_ATTRIBUTE((__unused__))) {
   DBUG_ENTER_FUNC();
 
   DBUG_ASSERT(thd != nullptr);
@@ -803,10 +800,9 @@ static int rdb_i_s_global_info_fill_table(my_core::THD *const thd,
     uint flags;
 
     if (!dict_manager->get_cf_flags(cf_handle->GetID(), &flags)) {
-      // NO_LINT_DEBUG
-      sql_print_error("RocksDB: Failed to get column family flags "
-                      "from CF with id = %u. MyRocks data dictionary may "
-                      "be corrupted.",
+      LogPluginErrMsg(ERROR_LEVEL, 0,
+                      "Failed to get column family flags from CF with id = %u. "
+                      "MyRocks data dictionary may be corrupted.",
                       cf_handle->GetID());
       abort();
     }
@@ -847,10 +843,9 @@ static int rdb_i_s_global_info_fill_table(my_core::THD *const thd,
 /*
   Support for INFORMATION_SCHEMA.ROCKSDB_COMPACTION_STATS dynamic table
  */
-static int rdb_i_s_compact_stats_fill_table(my_core::THD *thd,
-                                            my_core::TABLE_LIST *tables,
-                                            my_core::Item *cond
-                                            MY_ATTRIBUTE((__unused__))) {
+static int rdb_i_s_compact_stats_fill_table(
+    my_core::THD *thd, my_core::TABLE_LIST *tables,
+    my_core::Item *cond MY_ATTRIBUTE((__unused__))) {
   DBUG_ASSERT(thd != nullptr);
   DBUG_ASSERT(tables != nullptr);
 
@@ -925,7 +920,7 @@ static ST_FIELD_INFO rdb_i_s_compact_stats_fields_info[] = {
     ROCKSDB_FIELD_INFO("VALUE", sizeof(double), MYSQL_TYPE_DOUBLE, 0),
     ROCKSDB_FIELD_INFO_END};
 
-namespace // anonymous namespace = not visible outside this source file
+namespace  // anonymous namespace = not visible outside this source file
 {
 struct Rdb_ddl_scanner : public Rdb_tables_scanner {
   my_core::THD *m_thd;
@@ -933,7 +928,7 @@ struct Rdb_ddl_scanner : public Rdb_tables_scanner {
 
   int add_table(Rdb_tbl_def *tdef) override;
 };
-} // anonymous namespace
+}  // anonymous namespace
 
 /*
   Support for INFORMATION_SCHEMA.ROCKSDB_DDL dynamic table
@@ -953,7 +948,7 @@ enum {
   CF,
   AUTO_INCREMENT
 };
-} // namespace RDB_DDL_FIELD
+}  // namespace RDB_DDL_FIELD
 
 static ST_FIELD_INFO rdb_i_s_ddl_fields_info[] = {
     ROCKSDB_FIELD_INFO("TABLE_SCHEMA", NAME_LEN + 1, MYSQL_TYPE_STRING, 0),
@@ -1312,7 +1307,7 @@ enum {
   ENTRY_OTHERS,
   DISTINCT_KEYS_PREFIX
 };
-} // namespace RDB_INDEX_FILE_MAP_FIELD
+}  // namespace RDB_INDEX_FILE_MAP_FIELD
 
 static ST_FIELD_INFO rdb_i_s_index_file_map_fields_info[] = {
     /* The information_schema.rocksdb_index_file_map virtual table has four
@@ -1338,10 +1333,9 @@ static ST_FIELD_INFO rdb_i_s_index_file_map_fields_info[] = {
     ROCKSDB_FIELD_INFO_END};
 
 /* Fill the information_schema.rocksdb_index_file_map virtual table */
-static int rdb_i_s_index_file_map_fill_table(my_core::THD *const thd,
-                                             my_core::TABLE_LIST *const tables,
-                                             my_core::Item *const cond
-                                             MY_ATTRIBUTE((__unused__))) {
+static int rdb_i_s_index_file_map_fill_table(
+    my_core::THD *const thd, my_core::TABLE_LIST *const tables,
+    my_core::Item *const cond MY_ATTRIBUTE((__unused__))) {
   DBUG_ENTER_FUNC();
 
   DBUG_ASSERT(thd != nullptr);
@@ -1472,7 +1466,7 @@ static int rdb_i_s_index_file_map_init(void *const p) {
  */
 namespace RDB_LOCKS_FIELD {
 enum { COLUMN_FAMILY_ID = 0, TRANSACTION_ID, KEY, MODE };
-} // namespace RDB_LOCKS_FIELD
+}  // namespace RDB_LOCKS_FIELD
 
 static ST_FIELD_INFO rdb_i_s_lock_info_fields_info[] = {
     ROCKSDB_FIELD_INFO("COLUMN_FAMILY_ID", sizeof(uint32_t), MYSQL_TYPE_LONG,
@@ -1483,10 +1477,9 @@ static ST_FIELD_INFO rdb_i_s_lock_info_fields_info[] = {
     ROCKSDB_FIELD_INFO_END};
 
 /* Fill the information_schema.rocksdb_locks virtual table */
-static int rdb_i_s_lock_info_fill_table(my_core::THD *const thd,
-                                        my_core::TABLE_LIST *const tables,
-                                        my_core::Item *const cond
-                                        MY_ATTRIBUTE((__unused__))) {
+static int rdb_i_s_lock_info_fill_table(
+    my_core::THD *const thd, my_core::TABLE_LIST *const tables,
+    my_core::Item *const cond MY_ATTRIBUTE((__unused__))) {
   DBUG_ENTER_FUNC();
 
   DBUG_ASSERT(thd != nullptr);
@@ -1579,7 +1572,7 @@ enum {
   THREAD_ID,
   QUERY
 };
-} // namespace RDB_TRX_FIELD
+}  // namespace RDB_TRX_FIELD
 
 static ST_FIELD_INFO rdb_i_s_trx_info_fields_info[] = {
     ROCKSDB_FIELD_INFO("TRANSACTION_ID", sizeof(ulonglong), MYSQL_TYPE_LONGLONG,
@@ -1605,10 +1598,9 @@ static ST_FIELD_INFO rdb_i_s_trx_info_fields_info[] = {
     ROCKSDB_FIELD_INFO_END};
 
 /* Fill the information_schema.rocksdb_trx virtual table */
-static int rdb_i_s_trx_info_fill_table(my_core::THD *const thd,
-                                       my_core::TABLE_LIST *const tables,
-                                       my_core::Item *const cond
-                                       MY_ATTRIBUTE((__unused__))) {
+static int rdb_i_s_trx_info_fill_table(
+    my_core::THD *const thd, my_core::TABLE_LIST *const tables,
+    my_core::Item *const cond MY_ATTRIBUTE((__unused__))) {
   DBUG_ENTER_FUNC();
 
   DBUG_ASSERT(thd != nullptr);
@@ -1712,7 +1704,7 @@ enum {
   TABLE_NAME,
   ROLLED_BACK,
 };
-} // namespace RDB_TRX_FIELD
+}  // namespace RDB_DEADLOCK_FIELD
 
 static ST_FIELD_INFO rdb_i_s_deadlock_info_fields_info[] = {
     ROCKSDB_FIELD_INFO("DEADLOCK_ID", sizeof(ulonglong), MYSQL_TYPE_LONGLONG,
@@ -1837,6 +1829,7 @@ struct st_mysql_plugin rdb_i_s_cfstats = {
     "RocksDB column family stats",
     PLUGIN_LICENSE_GPL,
     rdb_i_s_cfstats_init,
+    nullptr,
     rdb_i_s_deinit,
     0x0001,  /* version number (0.1) */
     nullptr, /* status variables */
@@ -1853,6 +1846,7 @@ struct st_mysql_plugin rdb_i_s_dbstats = {
     "RocksDB database stats",
     PLUGIN_LICENSE_GPL,
     rdb_i_s_dbstats_init,
+    nullptr,
     rdb_i_s_deinit,
     0x0001,  /* version number (0.1) */
     nullptr, /* status variables */
@@ -1869,6 +1863,7 @@ struct st_mysql_plugin rdb_i_s_perf_context = {
     "RocksDB perf context stats",
     PLUGIN_LICENSE_GPL,
     rdb_i_s_perf_context_init,
+    nullptr,
     rdb_i_s_deinit,
     0x0001,  /* version number (0.1) */
     nullptr, /* status variables */
@@ -1885,6 +1880,7 @@ struct st_mysql_plugin rdb_i_s_perf_context_global = {
     "RocksDB perf context stats (all)",
     PLUGIN_LICENSE_GPL,
     rdb_i_s_perf_context_global_init,
+    nullptr,
     rdb_i_s_deinit,
     0x0001,  /* version number (0.1) */
     nullptr, /* status variables */
@@ -1901,6 +1897,7 @@ struct st_mysql_plugin rdb_i_s_cfoptions = {
     "RocksDB column family options",
     PLUGIN_LICENSE_GPL,
     rdb_i_s_cfoptions_init,
+    nullptr,
     rdb_i_s_deinit,
     0x0001,  /* version number (0.1) */
     nullptr, /* status variables */
@@ -1917,6 +1914,7 @@ struct st_mysql_plugin rdb_i_s_global_info = {
     "RocksDB global info",
     PLUGIN_LICENSE_GPL,
     rdb_i_s_global_info_init,
+    nullptr,
     rdb_i_s_deinit,
     0x0001,  /* version number (0.1) */
     nullptr, /* status variables */
@@ -1933,6 +1931,7 @@ struct st_mysql_plugin rdb_i_s_compact_stats = {
     "RocksDB compaction stats",
     PLUGIN_LICENSE_GPL,
     rdb_i_s_compact_stats_init,
+    nullptr,
     rdb_i_s_deinit,
     0x0001,  /* version number (0.1) */
     nullptr, /* status variables */
@@ -1949,6 +1948,7 @@ struct st_mysql_plugin rdb_i_s_ddl = {
     "RocksDB Data Dictionary",
     PLUGIN_LICENSE_GPL,
     rdb_i_s_ddl_init,
+    nullptr,
     rdb_i_s_deinit,
     0x0001,  /* version number (0.1) */
     nullptr, /* status variables */
@@ -1965,6 +1965,7 @@ struct st_mysql_plugin rdb_i_s_sst_props = {
     "RocksDB SST Properties",
     PLUGIN_LICENSE_GPL,
     rdb_i_s_sst_props_init,
+    nullptr,
     rdb_i_s_deinit,
     0x0001,  /* version number (0.1) */
     nullptr, /* status variables */
@@ -1981,6 +1982,7 @@ struct st_mysql_plugin rdb_i_s_index_file_map = {
     "RocksDB index file map",
     PLUGIN_LICENSE_GPL,
     rdb_i_s_index_file_map_init,
+    nullptr,
     rdb_i_s_deinit,
     0x0001,  /* version number (0.1) */
     nullptr, /* status variables */
@@ -1998,6 +2000,7 @@ struct st_mysql_plugin rdb_i_s_lock_info = {
     PLUGIN_LICENSE_GPL,
     rdb_i_s_lock_info_init,
     nullptr,
+    nullptr,
     0x0001,  /* version number (0.1) */
     nullptr, /* status variables */
     nullptr, /* system variables */
@@ -2013,6 +2016,7 @@ struct st_mysql_plugin rdb_i_s_trx_info = {
     "RocksDB transaction information",
     PLUGIN_LICENSE_GPL,
     rdb_i_s_trx_info_init,
+    nullptr,
     nullptr,
     0x0001,  /* version number (0.1) */
     nullptr, /* status variables */
@@ -2030,10 +2034,11 @@ struct st_mysql_plugin rdb_i_s_deadlock_info = {
     PLUGIN_LICENSE_GPL,
     rdb_i_s_deadlock_info_init,
     nullptr,
+    nullptr,
     0x0001,  /* version number (0.1) */
     nullptr, /* status variables */
     nullptr, /* system variables */
     nullptr, /* config options */
     0,       /* flags */
 };
-} // namespace myrocks
+}  // namespace myrocks

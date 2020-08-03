@@ -2,18 +2,17 @@
 # This test case will test basic redo log encryption support features.
 
 --source include/no_valgrind_without_big.inc
---source include/have_innodb.inc
---source include/not_embedded.inc
 --source include/have_innodb_max_16k.inc
 
 --disable_query_log
+call mtr.add_suppression("Ignoring tablespace .* because it could not be opened");
 call mtr.add_suppression("Encryption can't find master key, please check the keyring plugin is loaded.");
-call mtr.add_suppression("Redo log cannot be encrypted, if the keyring plugin is not loaded.");
-call mtr.add_suppression("keyring error: please check that a keyring plugin is loaded.");
+call mtr.add_suppression("Redo log cannot be encrypted if the keyring plugin is not loaded.");
+call mtr.add_suppression("Check keyring plugin fail, please check the keyring plugin is loaded.");
 call mtr.add_suppression("Redo log key generation failed.");
 --enable_query_log
 
-# eNable redo log encryption, should report error in server log, since keyring is not loaded.
+# Enable redo log encryption, should report error in server log, since keyring is not loaded.
 eval SET GLOBAL innodb_redo_log_encrypt = $redo_log_mode;
 
 # Create a table with encryption, should fail since keyring is not
@@ -31,7 +30,7 @@ let $restart_parameters = restart: $KEYRING_PARAMS --general-log --log-output=FI
 --replace_regex /\.dll/.so/
 --source include/restart_mysqld_no_echo.inc
 
-#Enable redo log encryption
+# Enable redo log encryption
 eval SET GLOBAL innodb_redo_log_encrypt = $redo_log_mode;
 
 SHOW CREATE TABLE t1;

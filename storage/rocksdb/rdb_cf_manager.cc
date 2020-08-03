@@ -15,7 +15,7 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 #ifdef USE_PRAGMA_IMPLEMENTATION
-#pragma implementation // gcc: Class implementation
+#pragma implementation  // gcc: Class implementation
 #endif
 
 /* This C++ files header file */
@@ -97,16 +97,18 @@ Rdb_cf_manager::get_or_create_cf(rocksdb::DB *const rdb,
   } else {
     /* Create a Column Family. */
     rocksdb::ColumnFamilyOptions opts;
+
     bool cf_name_found = m_cf_options->get_cf_options(cf_name, &opts);
 
     if (create || cf_name_found) {
-      // NO_LINT_DEBUG
-      sql_print_information("RocksDB: creating a column family %s",
-                            cf_name.c_str());
-      sql_print_information("    write_buffer_size=%ld",
-                            opts.write_buffer_size);
-      sql_print_information("    target_file_size_base=%" PRIu64,
-                            opts.target_file_size_base);
+
+      LogPluginErrMsg(INFORMATION_LEVEL, 0, "Creating a column family %s",
+                      cf_name.c_str());
+      LogPluginErrMsg(INFORMATION_LEVEL, 0, "    write_buffer_size=%ld",
+                      opts.write_buffer_size);
+      LogPluginErrMsg(INFORMATION_LEVEL, 0,
+                      "    target_file_size_base=%" PRIu64,
+                      opts.target_file_size_base);
 
       const rocksdb::Status s =
           rdb->CreateColumnFamily(opts, cf_name, &cf_handle);
@@ -118,12 +120,11 @@ Rdb_cf_manager::get_or_create_cf(rocksdb::DB *const rdb,
         cf_handle = nullptr;
       }
     } else {
-      RDB_MUTEX_UNLOCK_CHECK(m_mutex);
       my_error(ER_WRONG_ARGUMENTS, MYF(0),
-               "CREATE | ALTER | SET rocksdb_update_cf_options - can not find "
+               "CREATE | ALTER - can not find "
                "column family for storing index data and creation is not "
                "allowed.");
-      return nullptr;
+      cf_handle = nullptr;
     }
   }
 
@@ -148,8 +149,8 @@ Rdb_cf_manager::get_cf(const std::string &cf_name_arg) const {
   cf_handle = (it != m_cf_name_map.end()) ? it->second : nullptr;
 
   if (!cf_handle) {
-    // NO_LINT_DEBUG
-    sql_print_warning("Column family '%s' not found.", cf_name.c_str());
+    LogPluginErrMsg(WARNING_LEVEL, 0, "Column family '%s' not found.",
+                    cf_name.c_str());
   }
 
   RDB_MUTEX_UNLOCK_CHECK(m_mutex);
@@ -197,4 +198,4 @@ Rdb_cf_manager::get_all_cf(void) const {
   return list;
 }
 
-} // namespace myrocks
+}  // namespace myrocks

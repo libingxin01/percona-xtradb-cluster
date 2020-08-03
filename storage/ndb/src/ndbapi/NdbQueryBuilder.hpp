@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2011, 2012, Oracle and/or its affiliates. All rights reserved.
+   Copyright (c) 2011, 2018, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -19,7 +19,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA */
+   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
 #ifndef NdbQueryBuilder_H
 #define NdbQueryBuilder_H
@@ -27,10 +27,13 @@
 #include <stdlib.h>
 #include <ndb_types.h>
 
+#include "storage/ndb/include/ndbapi/NdbDictionary.hpp"
+
 // this file is currently not located in include/ndbapi
 // skip includes...and require them to be included first
 // BUH!
 
+class Ndb;
 class NdbQueryDef;
 class NdbQueryDefImpl;
 class NdbQueryBuilderImpl;
@@ -322,13 +325,13 @@ public:
   // C'tor for an equal bound:
   NdbQueryIndexBound(const NdbQueryOperand* const *eqKey)
    : m_low(eqKey), m_lowInclusive(true), m_high(eqKey), m_highInclusive(true)
-  {};
+  {}
 
   // C'tor for a normal range including low & high limit:
   NdbQueryIndexBound(const NdbQueryOperand* const *low,
                      const NdbQueryOperand* const *high)
    : m_low(low), m_lowInclusive(true), m_high(high), m_highInclusive(true)
-  {};
+  {}
 
   // Complete C'tor where limits might be exluded:
   NdbQueryIndexBound(const NdbQueryOperand* const *low,  bool lowIncl,
@@ -393,7 +396,15 @@ public:
    */
   void destroy();
 
-  const NdbQueryDef* prepare();    // Complete building a queryTree from 'this' NdbQueryBuilder
+  /**
+   * Complete building a queryTree from 'this' NdbQueryBuilder
+   */
+  const NdbQueryDef* prepare(const Ndb *ndb);
+
+  /**
+   * Compatible older version of prepare(); not recommended
+   */
+  const NdbQueryDef* prepare();
 
   // NdbQueryOperand builders:
   //

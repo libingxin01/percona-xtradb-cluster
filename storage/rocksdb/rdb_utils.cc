@@ -19,15 +19,16 @@
 
 /* C++ standard header files */
 #include <array>
+#include <sstream>
 #include <string>
 #include <vector>
-#include <sstream>
 
 /* C standard header files */
 #include <ctype.h>
 
 /* MySQL header files */
 #include "my_dir.h"
+#include "sql/mysqld.h"
 
 /* MyRocks header files */
 #include "./ha_rocksdb.h"
@@ -37,8 +38,7 @@ namespace myrocks {
 /*
   Skip past any spaces in the input
 */
-const char *rdb_skip_spaces(const struct charset_info_st *const cs,
-                            const char *str) {
+const char *rdb_skip_spaces(const CHARSET_INFO *const cs, const char *str) {
   DBUG_ASSERT(cs != nullptr);
   DBUG_ASSERT(str != nullptr);
 
@@ -123,8 +123,8 @@ const char *rdb_find_in_string(const char *str, const char *pattern,
 /*
   See if the next valid token matches the specified string
 */
-const char *rdb_check_next_token(const struct charset_info_st *const cs,
-                                 const char *str, const char *const pattern,
+const char *rdb_check_next_token(const CHARSET_INFO *const cs, const char *str,
+                                 const char *const pattern,
                                  bool *const succeeded) {
   DBUG_ASSERT(cs != nullptr);
   DBUG_ASSERT(str != nullptr);
@@ -147,8 +147,8 @@ const char *rdb_check_next_token(const struct charset_info_st *const cs,
 /*
   Parse id
 */
-const char *rdb_parse_id(const struct charset_info_st *const cs,
-                         const char *str, std::string *const id) {
+const char *rdb_parse_id(const CHARSET_INFO *const cs, const char *str,
+                         std::string *const id) {
   DBUG_ASSERT(cs != nullptr);
   DBUG_ASSERT(str != nullptr);
 
@@ -209,8 +209,7 @@ const char *rdb_parse_id(const struct charset_info_st *const cs,
 /*
   Skip id
 */
-const char *rdb_skip_id(const struct charset_info_st *const cs,
-                        const char *str) {
+const char *rdb_skip_id(const CHARSET_INFO *const cs, const char *str) {
   DBUG_ASSERT(cs != nullptr);
   DBUG_ASSERT(str != nullptr);
 
@@ -220,14 +219,15 @@ const char *rdb_skip_id(const struct charset_info_st *const cs,
 /*
   Parses a given string into tokens (if any) separated by a specific delimiter.
 */
-const std::vector<std::string> parse_into_tokens(
-  const std::string& s, const char delim) {
+const std::vector<std::string> parse_into_tokens(const std::string &s,
+                                                 const char delim) {
   std::vector<std::string> tokens;
   std::string t;
   std::stringstream ss(s);
-
   while (getline(ss, t, delim)) {
-    tokens.push_back(t);
+    rdb_trim_whitespace_from_edges(t);
+    if (!t.empty())
+      tokens.push_back(t);
   }
 
   return tokens;
@@ -283,7 +283,7 @@ std::string rdb_hexdump(const char *data, const std::size_t data_len,
 bool rdb_database_exists(const std::string &db_name) {
   const std::string dir =
       std::string(mysql_real_data_home) + FN_DIRSEP + db_name;
-  struct st_my_dir *const dir_info =
+  MY_DIR *const dir_info =
       my_dir(dir.c_str(), MYF(MY_DONT_SORT | MY_WANT_STAT));
   if (dir_info == nullptr) {
     return false;
@@ -295,23 +295,19 @@ bool rdb_database_exists(const std::string &db_name) {
 
 void rdb_log_status_error(const rocksdb::Status &s, const char *msg) {
   if (msg == nullptr) {
-    // NO_LINT_DEBUG
-    sql_print_error("RocksDB: status error, code: %d, error message: %s",
+    LogPluginErrMsg(ERROR_LEVEL, 0, "Status error, code: %d, error message: %s",
                     s.code(), s.ToString().c_str());
     return;
   }
 
-  // NO_LINT_DEBUG
-  sql_print_error("RocksDB: %s, Status Code: %d, Status: %s", msg, s.code(),
-                  s.ToString().c_str());
+  LogPluginErrMsg(ERROR_LEVEL, 0, "%s, Status Code: %d, Status: %s", msg,
+                  s.code(), s.ToString().c_str());
 }
 
-void warn_about_bad_patterns(const Regex &regex, const char *name) {
+void warn_about_bad_patterns(const char *regex, const char *name) {
   // There was some invalid regular expression data in the patterns supplied
 
-  // NO_LINT_DEBUG
-  sql_print_warning("RocksDB: Invalid pattern in %s: %s", name,
-                    regex.pattern().c_str());
+  LogPluginErrMsg(WARNING_LEVEL, 0, "Invalid pattern in %s: %s", name, regex);
 }
 
 // Split a string based on a delimiter.  Two delimiters in a row will not add
@@ -345,23 +341,25 @@ bool rdb_check_rocksdb_corruption() {
 }
 
 void rdb_persist_corruption_marker() {
-  const std::string& fileName = myrocks::rdb_corruption_marker_file_name();
+  const std::string &fileName = myrocks::rdb_corruption_marker_file_name();
   int fd = my_open(fileName.c_str(), O_CREAT | O_SYNC, MYF(MY_WME));
   if (fd < 0) {
-    sql_print_error("RocksDB: Can't create file %s to mark rocksdb as "
-                    "corrupted.",
+    LogPluginErrMsg(ERROR_LEVEL, 0,
+                    "Can't create file %s to mark rocksdb as corrupted.",
                     fileName.c_str());
   } else {
-    sql_print_information("RocksDB: Creating the file %s to abort mysqld "
-                          "restarts. Remove this file from the data directory "
-                          "after fixing the corruption to recover. ",
-                          fileName.c_str());
+    LogPluginErrMsg(INFORMATION_LEVEL, 0,
+                    "Creating the file %s to abort mysqld restarts. Remove "
+                    "this file from the data directory after fixing the "
+                    "corruption to recover. ",
+                    fileName.c_str());
   }
 
   int ret = my_close(fd, MYF(MY_WME));
   if (ret) {
-    sql_print_error("RocksDB: Error (%d) closing the file %s", ret, fileName.c_str());
+    LogPluginErrMsg(ERROR_LEVEL, 0, "Error (%d) closing the file %s", ret,
+                    fileName.c_str());
   }
 }
 
-} // namespace myrocks
+}  // namespace myrocks

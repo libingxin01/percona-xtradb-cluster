@@ -30,11 +30,12 @@
 #include <vector>
 
 /* MySQL header files */
-#include "field.h"
-#include "handler.h"   /* handler */
-#include "my_global.h" /* ulonglong */
+#include "ib_ut0counter.h"
 #include "my_icp.h"
-#include "sql_bitmap.h"
+#include "mysql/psi/mysql_rwlock.h"
+#include "sql/field.h"
+#include "sql/handler.h"
+#include "sql/sql_bitmap.h"
 #include "sql_string.h"
 
 /* RocksDB header files */
@@ -108,7 +109,7 @@ struct Rdb_deadlock_info {
     std::string index_name;
     std::string table_name;
   };
-  std::vector <Rdb_dl_trx_info> path;
+  std::vector<Rdb_dl_trx_info> path;
   int64_t deadlock_time;
   ulonglong victim_trx_id;
 };
@@ -327,7 +328,7 @@ struct Rdb_table_handler {
   uint m_table_name_length;
   int m_ref_count;
 
-  my_core::THR_LOCK m_thr_lock; ///< MySQL latch needed by m_db_lock
+  my_core::THR_LOCK m_thr_lock;  ///< MySQL latch needed by m_db_lock
 
   /* Stores cumulative table statistics */
   my_io_perf_atomic_t m_io_perf_read;
@@ -456,7 +457,7 @@ struct st_io_stall_stats {
         memtable_slowdown(0), total_stop(0), total_slowdown(0) {}
 };
 
-} // namespace myrocks
+}  // namespace myrocks
 
 #include "./rdb_buff.h"
 
@@ -469,7 +470,7 @@ template <> struct hash<myrocks::GL_INDEX_ID> {
     return std::hash<uint64_t>()(val);
   }
 };
-} // namespace std
+}  // namespace std
 
 namespace myrocks {
 
@@ -479,9 +480,9 @@ namespace myrocks {
 */
 
 class ha_rocksdb : public my_core::handler {
-  my_core::THR_LOCK_DATA m_db_lock; ///< MySQL database lock
+  my_core::THR_LOCK_DATA m_db_lock;  ///< MySQL database lock
 
-  Rdb_table_handler *m_table_handler; ///< Open table handler
+  Rdb_table_handler *m_table_handler;  ///< Open table handler
 
   /* Iterator used for range scans and for full table/index scans */
   rocksdb::Iterator *m_scan_it;
@@ -614,7 +615,7 @@ class ha_rocksdb : public my_core::handler {
     to be updated.
     @note Valid inside UPDATE statements, IIF(m_update_scope_is_valid == true).
   */
-  my_core::key_map m_update_scope;
+  my_core::Bitmap<((MAX_INDEXES + 7) / 8 * 8)> m_update_scope;
   bool m_update_scope_is_valid;
 
   /* SST information used for bulk loading the primary key */
@@ -703,7 +704,7 @@ class ha_rocksdb : public my_core::handler {
 
   /* Describes instructions on how to decode the field */
   class READ_FIELD {
-  public:
+   public:
     /* Points to Rdb_field_encoder describing the field */
     Rdb_field_encoder *m_field_enc;
     /* if true, decode the field, otherwise skip it */
@@ -733,7 +734,7 @@ class ha_rocksdb : public my_core::handler {
     current lookup to be covered. If the bitmap field is null, that means this
     index does not cover the current lookup for any record.
    */
-  MY_BITMAP m_lookup_bitmap = {nullptr, 0, 0, nullptr, nullptr};
+  MY_BITMAP m_lookup_bitmap;
 
   /*
     Number of bytes in on-disk (storage) record format that are used for
@@ -768,7 +769,7 @@ class ha_rocksdb : public my_core::handler {
   */
   void update_stats(void);
 
-public:
+ public:
   /*
     Controls whether writes include checksums. This is updated from the session
     variable
@@ -786,8 +787,8 @@ public:
     int err MY_ATTRIBUTE((__unused__));
     err = finalize_bulk_load(false);
     if (err != 0) {
-      sql_print_error("RocksDB: Error %d finalizing bulk load while closing "
-                      "handler.",
+      LogPluginErrMsg(ERROR_LEVEL, 0,
+                      "Error %d finalizing bulk load while closing handler.",
                       err);
     }
   }
@@ -800,18 +801,6 @@ public:
 
     DBUG_RETURN(rocksdb_hton_name);
   }
-
-  /* The following is only used by SHOW KEYS: */
-  const char *index_type(uint inx) override {
-    DBUG_ENTER_FUNC();
-
-    DBUG_RETURN("LSMTREE");
-  }
-
-  /** @brief
-    The file extensions.
-   */
-  const char **bas_ext() const override;
 
   /*
     Returns the name of the table's base name
@@ -830,12 +819,9 @@ public:
         We are saying that this engine is just statement capable to have
         an engine that can only handle statement-based logging. This is
         used in testing.
-      HA_REC_NOT_IN_SEQ
-        If we don't set it, filesort crashes, because it assumes rowids are
-        1..8 byte numbers
     */
     DBUG_RETURN(HA_BINLOG_ROW_CAPABLE | HA_BINLOG_STMT_CAPABLE |
-                HA_REC_NOT_IN_SEQ | HA_CAN_INDEX_BLOBS |
+                HA_CAN_INDEX_BLOBS |
                 (m_pk_can_be_decoded ? HA_PRIMARY_KEY_IN_READ_INDEX : 0) |
                 HA_PRIMARY_KEY_REQUIRED_FOR_POSITION | HA_NULL_IN_KEY |
                 HA_PARTIAL_COLUMN_READ | HA_ONLINE_ANALYZE);
@@ -859,13 +845,7 @@ public:
   */
   ulong index_flags(uint inx, uint part, bool all_parts) const override;
 
-  bool rpl_can_handle_stm_event() const override;
-
-  const key_map *keys_to_use_for_scanning() override {
-    DBUG_ENTER_FUNC();
-
-    DBUG_RETURN(&key_map_full);
-  }
+  bool rpl_can_handle_stm_event() const noexcept override;
 
   bool primary_key_is_clustered() const override {
     DBUG_ENTER_FUNC();
@@ -877,16 +857,10 @@ public:
     return m_store_row_debug_checksums && (rand() % 100 < m_checksums_pct);
   }
 
-  MY_NODISCARD
-  int rename_partitioned_table(const char *const from, const char *const to,
-                               const std::string &partition_string);
-
-  MY_NODISCARD
-  int rename_non_partitioned_table(const char *const from,
-                                   const char *const to);
-
-  MY_NODISCARD
-  int rename_table(const char *const from, const char *const to) override;
+  int rename_table(const char *const from, const char *const to,
+                   const dd::Table *from_table_def,
+                   dd::Table *to_table_def) override
+      MY_ATTRIBUTE((__warn_unused_result__));
 
   int convert_blob_from_storage_format(my_core::Field_blob *const blob,
                                        Rdb_string_reader *const reader,
@@ -915,10 +889,10 @@ public:
   static const std::vector<std::string> parse_into_tokens(const std::string &s,
                                                           const char delim);
 
-  static const std::string generate_cf_name(const uint index,
-    const TABLE *const table_arg,
-    const Rdb_tbl_def *const tbl_def_arg,
-    bool *per_part_match_found);
+  static const std::string
+  generate_cf_name(const uint index, const TABLE *const table_arg,
+                   const Rdb_tbl_def *const tbl_def_arg,
+                   bool *per_part_match_found);
 
   static const char *get_key_name(const uint index,
                                   const TABLE *const table_arg,
@@ -969,7 +943,8 @@ public:
     DBUG_RETURN(MAX_REF_PARTS);
   }
 
-  uint max_supported_key_part_length(HA_CREATE_INFO *) const override;
+  uint
+  max_supported_key_part_length(HA_CREATE_INFO *create_info) const override;
 
   /** @brief
     unireg.cc will call this to make sure that the storage engine can handle
@@ -1029,7 +1004,8 @@ public:
   virtual double read_time(uint, uint, ha_rows rows) override;
   virtual void print_error(int error, myf errflag) override;
 
-  int open(const char *const name, int mode, uint test_if_locked) override
+  int open(const char *const name, int mode, uint test_if_locked,
+           const dd::Table *table_def) override
       MY_ATTRIBUTE((__warn_unused_result__));
   int close(void) override MY_ATTRIBUTE((__warn_unused_result__));
 
@@ -1060,7 +1036,7 @@ public:
   /*
     Default implementation from cancel_pushed_idx_cond() suits us
   */
-private:
+ private:
   struct key_def_cf_info {
     rocksdb::ColumnFamilyHandle *cf_handle;
     bool is_reverse_cf;
@@ -1159,10 +1135,8 @@ private:
                                     rocksdb::Iterator *const iter,
                                     bool seek_backward);
 
-  int index_first_intern(uchar *buf)
-      MY_ATTRIBUTE((__warn_unused_result__));
-  int index_last_intern(uchar *buf)
-      MY_ATTRIBUTE((__warn_unused_result__));
+  int index_first_intern(uchar *buf) MY_ATTRIBUTE((__warn_unused_result__));
+  int index_last_intern(uchar *buf) MY_ATTRIBUTE((__warn_unused_result__));
 
   enum icp_result check_index_cond() const;
   int find_icp_matching_index_rec(const bool &move_forward, uchar *const buf)
@@ -1289,7 +1263,8 @@ private:
       MY_ATTRIBUTE((__warn_unused_result__));
   int external_lock(THD *const thd, int lock_type) override
       MY_ATTRIBUTE((__warn_unused_result__));
-  int truncate() override MY_ATTRIBUTE((__warn_unused_result__));
+  int truncate(dd::Table *table_def) override
+      MY_ATTRIBUTE((__warn_unused_result__));
 
   int reset() override {
     DBUG_ENTER_FUNC();
@@ -1306,15 +1281,10 @@ private:
   ha_rows records_in_range(uint inx, key_range *const min_key,
                            key_range *const max_key) override
       MY_ATTRIBUTE((__warn_unused_result__));
-  int delete_non_partitioned_table(const char *const from)
-      MY_ATTRIBUTE((__warn_unused_result__));
-  int delete_partitioned_table(const char *const from,
-                               const std::string &partition_info_str)
-      MY_ATTRIBUTE((__warn_unused_result__));
-  int delete_table(const char *const from) override
+  int delete_table(const char *const from, const dd::Table *table_def) override
       MY_ATTRIBUTE((__warn_unused_result__));
   int create(const char *const name, TABLE *const form,
-             HA_CREATE_INFO *const create_info) override
+             HA_CREATE_INFO *const create_info, dd::Table *table_def) override
       MY_ATTRIBUTE((__warn_unused_result__));
   bool check_if_incompatible_data(HA_CREATE_INFO *const info,
                                   uint table_changes) override
@@ -1323,16 +1293,6 @@ private:
   THR_LOCK_DATA **store_lock(THD *const thd, THR_LOCK_DATA **to,
                              enum thr_lock_type lock_type) override
       MY_ATTRIBUTE((__warn_unused_result__));
-
-  my_bool register_query_cache_table(THD *const thd, char *const table_key,
-                                     size_t key_length,
-                                     qc_engine_callback *const engine_callback,
-                                     ulonglong *const engine_data) override {
-    DBUG_ENTER_FUNC();
-
-    /* Currently, we don't support query cache */
-    DBUG_RETURN(FALSE);
-  }
 
   bool get_error_message(const int error, String *const buf) override;
 
@@ -1352,20 +1312,23 @@ private:
 
   enum_alter_inplace_result check_if_supported_inplace_alter(
       TABLE *altered_table,
-      my_core::Alter_inplace_info *const ha_alter_info) override;
+      my_core::Alter_inplace_info *ha_alter_info) override;
 
-  bool prepare_inplace_alter_table(
-      TABLE *const altered_table,
-      my_core::Alter_inplace_info *const ha_alter_info) override;
+  bool prepare_inplace_alter_table(TABLE *altered_table,
+                                   my_core::Alter_inplace_info *ha_alter_info,
+                                   const dd::Table *old_table_def,
+                                   dd::Table *new_table_def) override;
 
-  bool inplace_alter_table(
-      TABLE *const altered_table,
-      my_core::Alter_inplace_info *const ha_alter_info) override;
+  bool inplace_alter_table(TABLE *altered_table,
+                           my_core::Alter_inplace_info *ha_alter_info,
+                           const dd::Table *old_table_def,
+                           dd::Table *new_table_def) override;
 
   bool
-  commit_inplace_alter_table(TABLE *const altered_table,
+  commit_inplace_alter_table(TABLE *altered_table,
                              my_core::Alter_inplace_info *const ha_alter_info,
-                             bool commit) override;
+                             bool commit, const dd::Table *old_table_def,
+                             dd::Table *new_table_def) override;
 
   void set_use_read_free_rpl(const char *const whitelist);
 
@@ -1435,7 +1398,7 @@ struct Rdb_inplace_alter_ctx : public my_core::inplace_alter_handler_ctx {
 
   ~Rdb_inplace_alter_ctx() {}
 
-private:
+ private:
   /* Disable Copying */
   Rdb_inplace_alter_ctx(const Rdb_inplace_alter_ctx &);
   Rdb_inplace_alter_ctx &operator=(const Rdb_inplace_alter_ctx &);
@@ -1451,20 +1414,19 @@ private:
 */
 struct Rdb_hton_init_state {
   struct Scoped_lock {
-    Scoped_lock(Rdb_hton_init_state& state, bool write) : m_state(state) {
+    Scoped_lock(Rdb_hton_init_state &state, bool write) : m_state(state) {
       if (write)
         m_state.lock_write();
       else
         m_state.lock_read();
     }
-    ~Scoped_lock() {
-      m_state.unlock();
-    }
-  private:
-    Scoped_lock(const Scoped_lock& sl) : m_state(sl.m_state) {}
-    void operator=(const Scoped_lock&) {}
+    ~Scoped_lock() { m_state.unlock(); }
 
-    Rdb_hton_init_state& m_state;
+   private:
+    Scoped_lock(const Scoped_lock &sl) : m_state(sl.m_state) {}
+    void operator=(const Scoped_lock &) {}
+
+    Rdb_hton_init_state &m_state;
   };
 
   Rdb_hton_init_state() : m_initialized(false) {
@@ -1475,39 +1437,27 @@ struct Rdb_hton_init_state {
     mysql_rwlock_init(0, &m_rwlock);
   }
 
-  ~Rdb_hton_init_state() {
-    mysql_rwlock_destroy(&m_rwlock);
-  }
+  ~Rdb_hton_init_state() { mysql_rwlock_destroy(&m_rwlock); }
 
-  void lock_read() {
-    mysql_rwlock_rdlock(&m_rwlock);
-  }
+  void lock_read() { mysql_rwlock_rdlock(&m_rwlock); }
 
-  void lock_write() {
-    mysql_rwlock_wrlock(&m_rwlock);
-  }
+  void lock_write() { mysql_rwlock_wrlock(&m_rwlock); }
 
-  void unlock() {
-    mysql_rwlock_unlock(&m_rwlock);
-  }
+  void unlock() { mysql_rwlock_unlock(&m_rwlock); }
 
   /*
     Must be called with either a read or write lock held, unable to enforce
     behavior as mysql_rwlock has no means of determining if a thread has a lock
   */
-  bool initialized() const {
-    return m_initialized;
-  }
+  bool initialized() const { return m_initialized; }
 
   /*
     Must be called with only a write lock held, unable to enforce behavior as
     mysql_rwlock has no means of determining if a thread has a lock
   */
-  void set_initialized(bool init) {
-    m_initialized = init;
-  }
+  void set_initialized(bool init) { m_initialized = init; }
 
-private:
+ private:
   mysql_rwlock_t m_rwlock;
   bool m_initialized;
 };
@@ -1515,4 +1465,4 @@ private:
 // file name indicating RocksDB data corruption
 std::string rdb_corruption_marker_file_name();
 
-} // namespace myrocks
+}  // namespace myrocks

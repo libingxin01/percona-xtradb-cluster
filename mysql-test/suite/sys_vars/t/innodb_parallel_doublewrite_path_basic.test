@@ -1,5 +1,3 @@
---source include/have_innodb.inc
-
 --echo # Basic test for innodb_parallel_doublewrite_path
 
 --echo # Default value

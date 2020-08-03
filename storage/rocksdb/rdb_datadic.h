@@ -15,7 +15,7 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 #pragma once
 
-#define ROCKSDB_INCLUDE_VALIDATE_TABLES 1
+#define ROCKSDB_INCLUDE_VALIDATE_TABLES 0
 
 /* C++ standard header files */
 #include <algorithm>
@@ -60,7 +60,7 @@ class Rdb_ddl_manager;
   unpack_info is passed as context data between the two.
 */
 class Rdb_pack_field_context {
-public:
+ public:
   Rdb_pack_field_context(const Rdb_pack_field_context &) = delete;
   Rdb_pack_field_context &operator=(const Rdb_pack_field_context &) = delete;
 
@@ -184,7 +184,7 @@ enum {
 */
 
 class Rdb_key_def {
-public:
+ public:
   /* Convert a key from KeyTupleFormat to mem-comparable form */
   uint pack_index_tuple(TABLE *const tbl, uchar *const pack_buffer,
                         uchar *const packed_tuple, const uchar *const key_tuple,
@@ -207,11 +207,9 @@ public:
   /* Pack the hidden primary key into mem-comparable form. */
   uint pack_hidden_pk(const longlong &hidden_pk_id,
                       uchar *const packed_tuple) const;
-  int unpack_field(Rdb_field_packing *const fpi,
-                   Field *const             field,
-                   Rdb_string_reader*       reader,
-                   const uchar *const       default_value,
-                   Rdb_string_reader*       unp_reader) const;
+  int unpack_field(Rdb_field_packing *const fpi, Field *const field,
+                   Rdb_string_reader *reader, const uchar *const default_value,
+                   Rdb_string_reader *unp_reader) const;
   int unpack_record(TABLE *const table, uchar *const buf,
                     const rocksdb::Slice *const packed_key,
                     const rocksdb::Slice *const unpack_info,
@@ -397,7 +395,7 @@ public:
     VERSION_SIZE = 2,
     CF_NUMBER_SIZE = 4,
     CF_FLAG_SIZE = 4,
-    PACKED_SIZE = 4, // one int
+    PACKED_SIZE = 4,  // one int
   };
 
   // bit flags for combining bools when writing to disk
@@ -610,14 +608,14 @@ public:
                             MY_ATTRIBUTE((__unused__))) const;
 
   void pack_datetime2(Rdb_field_packing *const fpi, Field *const field,
-                     uchar *buf MY_ATTRIBUTE((__unused__)), uchar **dst,
-                     Rdb_pack_field_context *const pack_ctx
-                         MY_ATTRIBUTE((__unused__))) const;
-
-  void pack_timestamp2(Rdb_field_packing *const fpi, Field *const field,
                       uchar *buf MY_ATTRIBUTE((__unused__)), uchar **dst,
                       Rdb_pack_field_context *const pack_ctx
                           MY_ATTRIBUTE((__unused__))) const;
+
+  void pack_timestamp2(Rdb_field_packing *const fpi, Field *const field,
+                       uchar *buf MY_ATTRIBUTE((__unused__)), uchar **dst,
+                       Rdb_pack_field_context *const pack_ctx
+                           MY_ATTRIBUTE((__unused__))) const;
 
   void pack_time2(Rdb_field_packing *const fpi, Field *const field,
                   uchar *buf MY_ATTRIBUTE((__unused__)), uchar **dst,
@@ -768,7 +766,7 @@ public:
     const int storage_length = static_cast<int>(max_storage_fmt_length());
     return (storage_length - offset) >= needed;
   }
-#endif // DBUG_OFF
+#endif  // DBUG_OFF
 
   /* Global number of this index (used as prefix in StorageFormat) */
   const uint32 m_index_number;
@@ -824,7 +822,7 @@ public:
   std::string m_ttl_column;
 
  private:
-  friend class Rdb_tbl_def; // for m_index_number above
+  friend class Rdb_tbl_def;  // for m_index_number above
 
   /* Number of key parts in the primary key*/
   uint m_pk_key_parts;
@@ -904,7 +902,7 @@ extern std::array<const Rdb_collation_codec *, MY_ALL_CHARSETS_SIZE>
     rdb_collation_data;
 
 class Rdb_field_packing {
-public:
+ public:
   Rdb_field_packing(const Rdb_field_packing &);
   Rdb_field_packing &operator=(const Rdb_field_packing &) = delete;
   Rdb_field_packing();
@@ -924,7 +922,7 @@ public:
   const CHARSET_INFO *m_varchar_charset;
 
   // (Valid when Variable Length Space Padded Encoding is used):
-  uint m_segment_size; // size of segment used
+  uint m_segment_size;  // size of segment used
 
   // number of bytes used to store number of trimmed (or added)
   // spaces in the upack_info
@@ -967,7 +965,7 @@ public:
   */
   rdb_index_field_skip_t m_skip_func;
 
-private:
+ private:
   /*
     Location of the field in the table (key number and key part number).
 
@@ -993,7 +991,7 @@ private:
   uint m_keynr;
   uint m_key_part;
 
-public:
+ public:
   bool setup(const Rdb_key_def *const key_descr, const Field *const field,
              const uint &keynr_arg, const uint &key_part_arg,
              const uint16 &key_length);
@@ -1009,7 +1007,7 @@ public:
   For encoding/decoding of index tuples, see Rdb_key_def.
   */
 class Rdb_field_encoder {
-public:
+ public:
   Rdb_field_encoder(const Rdb_field_encoder &) = delete;
   Rdb_field_encoder &operator=(const Rdb_field_encoder &) = delete;
   /*
@@ -1030,7 +1028,7 @@ public:
   uint m_null_offset;
   uint16 m_field_index;
 
-  uchar m_null_mask; // 0 means the field cannot be null
+  uchar m_null_mask;  // 0 means the field cannot be null
 
   my_core::enum_field_types m_field_type;
 
@@ -1071,7 +1069,7 @@ inline bool Rdb_key_def::has_unpack_info(const uint &kp) const {
 */
 
 class Rdb_tbl_def {
-private:
+ private:
   void check_if_is_mysql_system_table();
 
   /* Stores 'dbname.tablename' */
@@ -1084,7 +1082,7 @@ private:
 
   void set_name(const std::string &name);
 
-public:
+ public:
   Rdb_tbl_def(const Rdb_tbl_def &) = delete;
   Rdb_tbl_def &operator=(const Rdb_tbl_def &) = delete;
 
@@ -1137,7 +1135,7 @@ class Rdb_seq_generator {
 
   mysql_mutex_t m_mutex;
 
-public:
+ public:
   Rdb_seq_generator(const Rdb_seq_generator &) = delete;
   Rdb_seq_generator &operator=(const Rdb_seq_generator &) = delete;
   Rdb_seq_generator() = default;
@@ -1174,7 +1172,7 @@ class Rdb_ddl_manager {
   // Maps index id to key definitons not yet committed to data dictionary.
   // This is mainly used to store key definitions during ALTER TABLE.
   std::map<GL_INDEX_ID, std::shared_ptr<Rdb_key_def>>
-    m_index_num_to_uncommitted_keydef;
+      m_index_num_to_uncommitted_keydef;
   mysql_rwlock_t m_rwlock;
 
   Rdb_seq_generator m_sequence;
@@ -1185,12 +1183,12 @@ class Rdb_ddl_manager {
 
   const std::shared_ptr<Rdb_key_def> &find(GL_INDEX_ID gl_index_id);
 
-public:
+ public:
   Rdb_ddl_manager(const Rdb_ddl_manager &) = delete;
   Rdb_ddl_manager &operator=(const Rdb_ddl_manager &) = delete;
   Rdb_ddl_manager() {}
 
-  /* Load the data dictionary from on-disk storage */
+    /* Load the data dictionary from on-disk storage */
 #if defined(ROCKSDB_INCLUDE_VALIDATE_TABLES) && ROCKSDB_INCLUDE_VALIDATE_TABLES
   bool init(Rdb_dict_manager *const dict_arg, Rdb_cf_manager *const cf_manager,
             const uint32_t &validate_tables);
@@ -1232,13 +1230,13 @@ public:
   void remove_uncommitted_keydefs(
       const std::unordered_set<std::shared_ptr<Rdb_key_def>> &indexes);
 
-private:
+ private:
   /* Put the data into in-memory table (only) */
   int put(Rdb_tbl_def *const key_descr, const bool &lock = true);
 
   /* Helper functions to be passed to my_core::HASH object */
   static const uchar *get_hash_key(Rdb_tbl_def *const rec, size_t *const length,
-                                   my_bool not_used MY_ATTRIBUTE((unused)));
+                                   bool not_used MY_ATTRIBUTE((unused)));
   static void free_hash_elem(void *const data);
 
 #if defined(ROCKSDB_INCLUDE_VALIDATE_TABLES) && ROCKSDB_INCLUDE_VALIDATE_TABLES
@@ -1308,7 +1306,7 @@ private:
 
 */
 class Rdb_dict_manager {
-private:
+ private:
   mysql_mutex_t m_mutex;
   rocksdb::TransactionDB *m_db = nullptr;
   rocksdb::ColumnFamilyHandle *m_system_cfh = nullptr;
@@ -1331,7 +1329,7 @@ private:
   void log_start_drop_index(GL_INDEX_ID gl_index_id,
                             const char *log_action) const;
 
-public:
+ public:
   Rdb_dict_manager(const Rdb_dict_manager &) = delete;
   Rdb_dict_manager &operator=(const Rdb_dict_manager &) = delete;
   Rdb_dict_manager() = default;
@@ -1445,11 +1443,9 @@ public:
   Rdb_index_stats get_stats(GL_INDEX_ID gl_index_id) const;
 
   rocksdb::Status put_auto_incr_val(rocksdb::WriteBatchBase *batch,
-                                    GL_INDEX_ID gl_index_id,
-                                    ulonglong val,
+                                    GL_INDEX_ID gl_index_id, ulonglong val,
                                     bool overwrite = false) const;
-  bool get_auto_incr_val(GL_INDEX_ID gl_index_id,
-                         ulonglong *new_val) const;
+  bool get_auto_incr_val(GL_INDEX_ID gl_index_id, ulonglong *new_val) const;
 };
 
 struct Rdb_index_info {
@@ -1566,4 +1562,4 @@ class Rdb_system_merge_op : public rocksdb::AssociativeMergeOperator {
   }
 };
 
-} // namespace myrocks
+}  // namespace myrocks

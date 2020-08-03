@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2012, 2014, Oracle and/or its affiliates. All rights reserved.
+   Copyright (c) 2012, 2018, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -30,6 +30,7 @@ public class NdbRecordKeyOperationImpl extends NdbRecordOperationImpl {
 
     public NdbRecordKeyOperationImpl(ClusterTransactionImpl clusterTransaction, Table storeTable) {
         super(clusterTransaction, storeTable);
+        this.valueBuffer = ndbRecordValues.newBuffer();
         this.ndbRecordKeys = this.ndbRecordValues;
         this.keyBufferSize = this.valueBufferSize;
         this.keyBuffer = valueBuffer;
@@ -47,7 +48,9 @@ public class NdbRecordKeyOperationImpl extends NdbRecordOperationImpl {
         clusterTransaction.postExecuteCallback(new Runnable() {
             public void run() {
                 freeResourcesAfterExecute();
-                loadBlobValues();
+                if (ndbOperation.getNdbError().code() == 0) {
+                    loadBlobValues();
+                }
             }
         });
     }

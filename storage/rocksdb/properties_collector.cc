@@ -24,9 +24,8 @@
 #include <vector>
 
 /* MySQL header files */
-#include "log.h"
 #include "my_stacktrace.h"
-#include "sql_array.h"
+#include "sql/sql_array.h"
 
 /* MyRocks header files */
 #include "./rdb_datadic.h"
@@ -39,7 +38,7 @@ std::atomic<uint64_t> rocksdb_num_sst_entry_delete(0);
 std::atomic<uint64_t> rocksdb_num_sst_entry_singledelete(0);
 std::atomic<uint64_t> rocksdb_num_sst_entry_merge(0);
 std::atomic<uint64_t> rocksdb_num_sst_entry_other(0);
-my_bool rocksdb_compaction_sequential_deletes_count_sd = false;
+bool rocksdb_compaction_sequential_deletes_count_sd = false;
 
 Rdb_tbl_prop_coll::Rdb_tbl_prop_coll(Rdb_ddl_manager *const ddl_manager,
                                      const Rdb_compact_params &params,
@@ -165,9 +164,9 @@ void Rdb_tbl_prop_coll::CollectStatsForRow(const rocksdb::Slice &key,
     stats->m_entry_others++;
     break;
   default:
-    // NO_LINT_DEBUG
-    sql_print_error("RocksDB: Unexpected entry type found: %u. "
-                    "This should not happen so aborting the system.",
+    LogPluginErrMsg(ERROR_LEVEL, 0,
+                    "Unexpected entry type found: %u. This should not happen "
+                    "so aborting the system.",
                     type);
     abort();
     break;
@@ -361,8 +360,8 @@ int Rdb_index_stats::unmaterialize(const std::string &s,
   // Make sure version is within supported range.
   if (version < INDEX_STATS_VERSION_INITIAL ||
       version > INDEX_STATS_VERSION_ENTRY_TYPES) {
-    // NO_LINT_DEBUG
-    sql_print_error("Index stats version %d was outside of supported range. "
+    LogPluginErrMsg(ERROR_LEVEL, 0,
+                    "Index stats version %d was outside of supported range. "
                     "This should not happen so aborting the system.",
                     version);
     abort();
@@ -393,8 +392,7 @@ int Rdb_index_stats::unmaterialize(const std::string &s,
       stats.m_entry_merges = rdb_netbuf_read_uint64(&p);
       stats.m_entry_others = rdb_netbuf_read_uint64(&p);
     }
-    if (p +
-            stats.m_distinct_keys_per_prefix.size() *
+    if (p + stats.m_distinct_keys_per_prefix.size() *
                 sizeof(stats.m_distinct_keys_per_prefix[0]) >
         p2) {
       return HA_EXIT_FAILURE;
@@ -527,4 +525,4 @@ void Rdb_tbl_card_coll::AdjustStats(Rdb_index_stats *stats) {
   }
 }
 
-} // namespace myrocks
+}  // namespace myrocks

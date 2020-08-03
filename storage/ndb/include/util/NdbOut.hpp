@@ -1,4 +1,4 @@
-/* Copyright (c) 2003, 2015, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2003, 2018, Oracle and/or its affiliates. All rights reserved.
 
 
    This program is free software; you can redistribute it and/or modify
@@ -139,6 +139,13 @@ private:
   OutputStream * m_org;
   NullOutputStream * m_null;
 };
+
+void
+NdbOut_ReInit(OutputStream* stdout_ostream,
+              OutputStream* stderr_ostream);
+
+void
+NdbOut_Init();
 
 #else
 void ndbout_c(const char * fmt, ...) ATTRIBUTE_FORMAT(printf, 1, 2);

@@ -15,7 +15,7 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
 
 #ifdef USE_PRAGMA_IMPLEMENTATION
-#pragma implementation // gcc: Class implementation
+#pragma implementation  // gcc: Class implementation
 #endif
 
 /* This C++ file's header file */
@@ -32,13 +32,16 @@
 #include <vector>
 
 /* MySQL header files */
-#include "field.h"
-#include "key.h"
 #include "m_ctype.h"
 #include "my_bit.h"
 #include "my_bitmap.h"
 #include "my_stacktrace.h"
-#include "sql_table.h"
+#include "myisampack.h"
+#include "sql/field.h"
+#include "sql/key.h"
+#include "sql/mysqld.h"
+#include "sql/sql_table.h"
+#include "sql/table.h"
 
 /* MyRocks header files */
 #include "./ha_rocksdb_proto.h"
@@ -46,7 +49,9 @@
 #include "./rdb_psi.h"
 #include "./rdb_utils.h"
 
-#include "partitioning/partition_base.h"
+extern CHARSET_INFO my_charset_utf16_bin;
+extern CHARSET_INFO my_charset_utf16le_bin;
+extern CHARSET_INFO my_charset_utf32_bin;
 
 namespace myrocks {
 
@@ -97,8 +102,7 @@ Rdb_key_def::Rdb_key_def(const Rdb_key_def &k)
       m_stats(k.m_stats), m_index_flags_bitmap(k.m_index_flags_bitmap),
       m_ttl_rec_offset(k.m_ttl_rec_offset), m_ttl_duration(k.m_ttl_duration),
       m_ttl_column(k.m_ttl_column), m_pk_part_no(k.m_pk_part_no),
-      m_pack_info(nullptr), m_keyno(k.m_keyno),
-      m_key_parts(k.m_key_parts),
+      m_pack_info(nullptr), m_keyno(k.m_keyno), m_key_parts(k.m_key_parts),
       m_ttl_pk_key_part_offset(k.m_ttl_pk_key_part_offset),
       m_ttl_field_offset(UINT_MAX), m_prefix_extractor(k.m_prefix_extractor),
       m_maxlength(k.m_maxlength) {
@@ -115,9 +119,9 @@ Rdb_key_def::Rdb_key_def(const Rdb_key_def &k)
   if (k.m_pack_info) {
     const size_t size = sizeof(Rdb_field_packing) * k.m_key_parts;
 #ifdef HAVE_PSI_INTERFACE
-    void* buf = my_malloc(rdb_datadic_memory_key, size, MYF(0));
+    void *buf = my_malloc(rdb_datadic_memory_key, size, MYF(0));
 #else
-    void* buf = my_malloc(PSI_NOT_INSTRUMENTED, size, MYF(0));
+    void *buf = my_malloc(PSI_NOT_INSTRUMENTED, size, MYF(0));
 #endif
     m_pack_info = new (buf) Rdb_field_packing(*k.m_pack_info);
   }
@@ -219,9 +223,9 @@ void Rdb_key_def::setup(const TABLE *const tbl,
 
     const size_t size = sizeof(Rdb_field_packing) * m_key_parts;
 #ifdef HAVE_PSI_INTERFACE
-    void* buf = my_malloc(rdb_datadic_memory_key, size, MYF(0));
+    void *buf = my_malloc(rdb_datadic_memory_key, size, MYF(0));
 #else
-    void* buf = my_malloc(PSI_NOT_INSTRUMENTED, size, MYF(0));
+    void *buf = my_malloc(PSI_NOT_INSTRUMENTED, size, MYF(0));
 #endif
     m_pack_info = new (buf) Rdb_field_packing;
 
@@ -275,7 +279,7 @@ void Rdb_key_def::setup(const TABLE *const tbl,
         }
 
         if (field && field->real_maybe_null())
-          max_len += 1; // NULL-byte
+          max_len += 1;  // NULL-byte
 
         m_pack_info[dst_i].setup(this, field, keyno_to_set, keypart_to_set,
                                  key_part ? key_part->length : 0);
@@ -780,7 +784,7 @@ uint Rdb_key_def::pack_index_tuple(TABLE *const tbl, uchar *const pack_buffer,
 
   uint n_used_parts = my_count_bits(keypart_map);
   if (keypart_map == HA_WHOLE_KEY)
-    n_used_parts = 0; // Full key is used
+    n_used_parts = 0;  // Full key is used
 
   /* Then, convert the record into a mem-comparable form */
   return pack_record(tbl, pack_buffer, tbl->record[0], packed_tuple, nullptr,
@@ -873,12 +877,12 @@ size_t Rdb_key_def::get_unpack_header_size(char tag) {
  */
 void Rdb_key_def::get_lookup_bitmap(const TABLE *table, MY_BITMAP *map) const {
   DBUG_ASSERT(map->bitmap == nullptr);
-  bitmap_init(map, nullptr, MAX_REF_PARTS, false);
+  bitmap_init(map, nullptr, MAX_REF_PARTS);
   uint curr_bitmap_pos = 0;
 
   // Indicates which columns in the read set might be covered.
   MY_BITMAP maybe_covered_bitmap;
-  bitmap_init(&maybe_covered_bitmap, nullptr, table->read_set->n_bits, false);
+  bitmap_init(&maybe_covered_bitmap, nullptr, table->read_set->n_bits);
 
   for (uint i = 0; i < m_key_parts; i++) {
     if (table_has_hidden_pk(table) && i + 1 == m_key_parts) {
@@ -959,7 +963,7 @@ bool Rdb_key_def::covers_lookup(TABLE *const table,
 
   MY_BITMAP covered_bitmap;
   my_bitmap_map covered_bits;
-  bitmap_init(&covered_bitmap, &covered_bits, MAX_REF_PARTS, false);
+  bitmap_init(&covered_bitmap, &covered_bits, MAX_REF_PARTS);
   covered_bits = rdb_netbuf_to_uint16((const uchar *)unpack_header +
                                       sizeof(RDB_UNPACK_COVERED_DATA_TAG) +
                                       RDB_UNPACK_COVERED_DATA_LEN_SIZE);
@@ -1002,8 +1006,8 @@ uchar *Rdb_key_def::pack_field(Field *const field, Rdb_field_packing *pack_info,
   Rdb_pack_field_context pack_ctx(unpack_info);
 
   // Set the offset for methods which do not take an offset as an argument
-  DBUG_ASSERT(is_storage_available(tuple - packed_tuple,
-                                   pack_info->m_max_image_len));
+  DBUG_ASSERT(
+      is_storage_available(tuple - packed_tuple, pack_info->m_max_image_len));
 
   (this->*pack_info->m_pack_func)(pack_info, field, pack_buffer, &tuple,
                                   &pack_ctx);
@@ -1129,7 +1133,7 @@ uint Rdb_key_def::pack_record(
   MY_BITMAP covered_bitmap;
   my_bitmap_map covered_bits;
   uint curr_bitmap_pos = 0;
-  bitmap_init(&covered_bitmap, &covered_bits, MAX_REF_PARTS, false);
+  bitmap_init(&covered_bitmap, &covered_bits, MAX_REF_PARTS);
 
   for (uint i = 0; i < n_key_parts; i++) {
     // Fill hidden pk id into the last key part for secondary keys for tables
@@ -1157,9 +1161,10 @@ uint Rdb_key_def::pack_record(
       *ttl_pk_offset = tuple - packed_tuple;
     }
 
-    field->move_field(const_cast<uchar*>(record) + field_offset,
-        maybe_null ? const_cast<uchar*>(record) + null_offset : nullptr,
-        field->null_bit);
+    field->move_field(const_cast<uchar *>(record) + field_offset,
+                      maybe_null ? const_cast<uchar *>(record) + null_offset
+                                 : nullptr,
+                      field->null_bit);
     // WARNING! Don't return without restoring field->ptr and field->null_ptr
 
     tuple = pack_field(field, &m_pack_info[i], tuple, packed_tuple, pack_buffer,
@@ -1265,12 +1270,12 @@ uint Rdb_key_def::pack_hidden_pk(const longlong &hidden_pk_id,
   Function of type rdb_index_field_pack_t
 
   The following code (Rdb_key_def::pack_* and dependent functions) is pulled
-  directly from ./sql/field.cc from all of the various Field_*::make_sort_key()
-  functions.  These results of these functions within the server code was never
-  intended to be persisted and as such the encoding and comparison can change
-  over time without any notice.  To protect us from such an event as well as to
-  ensure binary upgrade compatibility, we have copied that code here so that it
-  is entirely within our control.
+  directly from ./sql/field.cc from all of the various
+  Field_*::make_sort_key() functions.  These results of these functions within
+  the server code was never intended to be persisted and as such the encoding
+  and comparison can change over time without any notice.  To protect us from
+  such an event as well as to ensure binary upgrade compatibility, we have
+  copied that code here so that it is entirely within our control.
 */
 
 #if !defined(DBL_EXP_DIG)
@@ -1541,7 +1546,7 @@ void Rdb_key_def::pack_double(
     float8get(&nr, ptr);
   } else
 #endif
-    doubleget(&nr, ptr);
+    nr = doubleget(ptr);
   if (length < 8) {
     uchar buff[8];
     change_double_for_sort(nr, buff);
@@ -1751,7 +1756,7 @@ void Rdb_key_def::pack_blob(
   size_t length = fpi->m_max_image_len;
   const uchar *ptr = field->ptr;
   uchar *to = *dst;
-  Field_blob* const field_blob = dynamic_cast<Field_blob *const>(field);
+  Field_blob *const field_blob = dynamic_cast<Field_blob *const>(field);
   const CHARSET_INFO *field_charset = field_blob->charset();
 
   uchar *blob;
@@ -1787,9 +1792,9 @@ void Rdb_key_def::pack_blob(
     }
     memcpy(&blob, ptr + field_blob->pack_length_no_ptr(), sizeof(char *));
 
-    blob_length = field_charset->coll->strnxfrm(
-        field_charset, to, length, length, blob, blob_length,
-        MY_STRXFRM_PAD_WITH_SPACE | MY_STRXFRM_PAD_TO_MAXLEN);
+    blob_length =
+        field_charset->coll->strnxfrm(field_charset, to, length, length, blob,
+                                      blob_length, MY_STRXFRM_PAD_TO_MAXLEN);
     DBUG_ASSERT(blob_length == length);
   }
 
@@ -1917,13 +1922,10 @@ size_t Rdb_key_def::key_length(const TABLE *const table,
   return key.size() - reader.remaining_bytes();
 }
 
-int Rdb_key_def::unpack_field(
-    Rdb_field_packing *const fpi,
-    Field *const             field,
-    Rdb_string_reader*       reader,
-    const uchar *const       default_value,
-    Rdb_string_reader*       unp_reader) const
-{
+int Rdb_key_def::unpack_field(Rdb_field_packing *const fpi, Field *const field,
+                              Rdb_string_reader *reader,
+                              const uchar *const default_value,
+                              Rdb_string_reader *unp_reader) const {
   if (fpi->m_maybe_null) {
     const char *nullp;
     if (!(nullp = reader->read(1))) {
@@ -2006,7 +2008,7 @@ int Rdb_key_def::unpack_record(TABLE *const table, uchar *const buf,
   const bool has_covered_bitmap =
       has_unpack_info && (unpack_header[0] == RDB_UNPACK_COVERED_DATA_TAG);
   if (has_covered_bitmap) {
-    bitmap_init(&covered_bitmap, &covered_bits, MAX_REF_PARTS, false);
+    bitmap_init(&covered_bitmap, &covered_bits, MAX_REF_PARTS);
     covered_bits = rdb_netbuf_to_uint16((const uchar *)unpack_header +
                                         sizeof(RDB_UNPACK_COVERED_DATA_TAG) +
                                         RDB_UNPACK_COVERED_DATA_LEN_SIZE);
@@ -2143,13 +2145,13 @@ bool Rdb_key_def::table_has_hidden_pk(const TABLE *const table) {
 void Rdb_key_def::report_checksum_mismatch(const bool &is_key,
                                            const char *const data,
                                            const size_t data_size) const {
-  // NO_LINT_DEBUG
-  sql_print_error("Checksum mismatch in %s of key-value pair for index 0x%x",
+  LogPluginErrMsg(ERROR_LEVEL, 0,
+                  "Checksum mismatch in %s of key-value pair for index 0x%x",
                   is_key ? "key" : "value", get_index_number());
 
   const std::string buf = rdb_hexdump(data, data_size, RDB_MAX_HEXDUMP_LEN);
-  // NO_LINT_DEBUG
-  sql_print_error("Data with incorrect checksum (%" PRIu64 " bytes): %s",
+  LogPluginErrMsg(ERROR_LEVEL, 0,
+                  "Data with incorrect checksum (%" PRIu64 " bytes): %s",
                   (uint64_t)data_size, buf.c_str());
 
   my_error(ER_INTERNAL_ERROR, MYF(0), "Record checksum mismatch");
@@ -2324,7 +2326,7 @@ int Rdb_key_def::unpack_integer(
     if (((Field_num *)field)->unsigned_flag)
       to[0] = from[0];
     else
-      to[0] = (char)(from[0] ^ 128); // Reverse the sign bit.
+      to[0] = (char)(from[0] ^ 128);  // Reverse the sign bit.
     memcpy(to + 1, from + 1, length - 1);
   }
 #else
@@ -2334,7 +2336,7 @@ int Rdb_key_def::unpack_integer(
       to[length - 1] = sign_byte;
     else
       to[length - 1] =
-          static_cast<char>(sign_byte ^ 128); // Reverse the sign bit.
+          static_cast<char>(sign_byte ^ 128);  // Reverse the sign bit.
     for (int i = 0, j = length - 1; i < length - 1; ++i, --j)
       to[i] = from[j];
   }
@@ -2406,8 +2408,8 @@ int Rdb_key_def::unpack_floating_point(
     // If the high bit is set the original value was positive so
     // remove the high bit and subtract one from the exponent.
     ushort exp_part = ((ushort)tmp[0] << 8) | (ushort)tmp[1];
-    exp_part &= 0x7FFF;                            // clear high bit;
-    exp_part -= (ushort)1 << (16 - 1 - exp_digit); // subtract from exponent
+    exp_part &= 0x7FFF;                             // clear high bit;
+    exp_part -= (ushort)1 << (16 - 1 - exp_digit);  // subtract from exponent
     tmp[0] = (uchar)(exp_part >> 8);
     tmp[1] = (uchar)exp_part;
   } else {
@@ -2662,7 +2664,8 @@ void Rdb_key_def::pack_with_varchar_encoding(
                                   : uint2korr(field->ptr);
   size_t xfrm_len = charset->coll->strnxfrm(
       charset, buf, fpi->m_max_image_len, field_var->char_length(),
-      field_var->ptr + field_var->length_bytes, value_length, 0);
+      field_var->ptr + field_var->length_bytes, value_length,
+      MY_STRXFRM_NOPAD_WITH_SPACE);
 
   /* Got a mem-comparable image in 'buf'. Now, produce varlength encoding */
   if (use_legacy_varbinary_format()) {
@@ -2769,16 +2772,23 @@ void Rdb_key_def::pack_with_varchar_space_pad(
   const CHARSET_INFO *const charset = field->charset();
   const auto field_var = static_cast<Field_varstring *>(field);
 
+  const char *src =
+      reinterpret_cast<const char *>(field_var->ptr + field_var->length_bytes);
+
   const size_t value_length = (field_var->length_bytes == 1)
                                   ? (uint)*field->ptr
                                   : uint2korr(field->ptr);
 
-  const size_t trimmed_len = charset->cset->lengthsp(
-      charset, (const char *)field_var->ptr + field_var->length_bytes,
-      value_length);
+  const size_t trimmed_len =
+      charset->cset->lengthsp(charset, src, value_length);
+
+  const size_t max_xfrm_len = charset->cset->charpos(
+      charset, src, src + trimmed_len, field_var->char_length());
+
   const size_t xfrm_len = charset->coll->strnxfrm(
       charset, buf, fpi->m_max_image_len, field_var->char_length(),
-      field_var->ptr + field_var->length_bytes, trimmed_len, 0);
+      reinterpret_cast<const uchar *>(src),
+      std::min<size_t>(trimmed_len, max_xfrm_len), MY_STRXFRM_NOPAD_WITH_SPACE);
 
   /* Got a mem-comparable image in 'buf'. Now, produce varlength encoding */
   uchar *const buf_end = buf + xfrm_len;
@@ -2797,7 +2807,7 @@ void Rdb_key_def::pack_with_varchar_space_pad(
     if (padding_bytes) {
       memcpy(ptr, fpi->space_xfrm->data(), padding_bytes);
       ptr += padding_bytes;
-      *ptr = VARCHAR_CMP_EQUAL_TO_SPACES; // last segment
+      *ptr = VARCHAR_CMP_EQUAL_TO_SPACES;  // last segment
     } else {
       // Compare the string suffix with a hypothetical infinite string of
       // spaces. It could be that the first difference is beyond the end of
@@ -3037,16 +3047,16 @@ int Rdb_key_def::unpack_binary_or_utf8_varchar_space_pad(
   while ((ptr = (const uchar *)reader->read(fpi->m_segment_size))) {
     const char last_byte = ptr[fpi->m_segment_size - 1];
     size_t used_bytes;
-    if (last_byte == VARCHAR_CMP_EQUAL_TO_SPACES) // this is the last segment
+    if (last_byte == VARCHAR_CMP_EQUAL_TO_SPACES)  // this is the last segment
     {
       if (space_padding_bytes > (fpi->m_segment_size - 1))
-        return UNPACK_FAILURE; // Cannot happen, corrupted data
+        return UNPACK_FAILURE;  // Cannot happen, corrupted data
       used_bytes = (fpi->m_segment_size - 1) - space_padding_bytes;
       finished = true;
     } else {
       if (last_byte != VARCHAR_CMP_LESS_THAN_SPACES &&
           last_byte != VARCHAR_CMP_GREATER_THAN_SPACES) {
-        return UNPACK_FAILURE; // Invalid value
+        return UNPACK_FAILURE;  // Invalid value
       }
       used_bytes = fpi->m_segment_size - 1;
     }
@@ -3313,12 +3323,12 @@ int Rdb_key_def::unpack_simple_varchar_space_pad(
   /* Decode the length-emitted encoding here */
   while ((ptr = (const uchar *)reader->read(fpi->m_segment_size))) {
     const char last_byte =
-        ptr[fpi->m_segment_size - 1]; // number of padding bytes
+        ptr[fpi->m_segment_size - 1];  // number of padding bytes
     size_t used_bytes;
     if (last_byte == VARCHAR_CMP_EQUAL_TO_SPACES) {
       // this is the last one
       if (space_padding_bytes > (fpi->m_segment_size - 1))
-        return UNPACK_FAILURE; // Cannot happen, corrupted data
+        return UNPACK_FAILURE;  // Cannot happen, corrupted data
       used_bytes = (fpi->m_segment_size - 1) - space_padding_bytes;
       finished = true;
     } else {
@@ -3415,7 +3425,7 @@ const int RDB_SPACE_XFRM_SIZE = 32;
 // A class holding information about how space character is represented in a
 // charset.
 class Rdb_charset_space_info {
-public:
+ public:
   Rdb_charset_space_info(const Rdb_charset_space_info &) = delete;
   Rdb_charset_space_info &operator=(const Rdb_charset_space_info &) = delete;
   Rdb_charset_space_info() = default;
@@ -3473,10 +3483,11 @@ static void rdb_get_mem_comparable_space(const CHARSET_INFO *const cs,
       const size_t space_mb_len = cs->cset->wc_mb(
           cs, (my_wc_t)cs->pad_char, space_mb, space_mb + sizeof(space_mb));
 
-      uchar space[20]; // mem-comparable image of the space character
+      uchar space[20];  // mem-comparable image of the space character
 
-      const size_t space_len = cs->coll->strnxfrm(cs, space, sizeof(space), 1,
-                                                  space_mb, space_mb_len, 0);
+      const size_t space_len =
+          cs->coll->strnxfrm(cs, space, sizeof(space), 1, space_mb,
+                             space_mb_len, MY_STRXFRM_NOPAD_WITH_SPACE);
       Rdb_charset_space_info *const info = new Rdb_charset_space_info;
       info->space_xfrm_len = space_len;
       info->space_mb_len = space_mb_len;
@@ -3542,11 +3553,11 @@ rdb_init_collation_mapping(const my_core::CHARSET_INFO *const cs) {
           }
         }
 
-        cur->m_make_unpack_info_func = {{
-            &Rdb_key_def::make_unpack_simple_varchar,
-            &Rdb_key_def::make_unpack_simple}};
+        cur->m_make_unpack_info_func = {
+            {&Rdb_key_def::make_unpack_simple_varchar,
+             &Rdb_key_def::make_unpack_simple}};
         cur->m_unpack_func = {{&Rdb_key_def::unpack_simple_varchar_space_pad,
-                              &Rdb_key_def::unpack_simple}};
+                               &Rdb_key_def::unpack_simple}};
       } else {
         // Out of luck for now.
       }
@@ -3653,7 +3664,7 @@ bool Rdb_field_packing::setup(const Rdb_key_def *const key_descr,
   m_unpack_func = nullptr;
   m_make_unpack_info_func = nullptr;
   m_unpack_data_len = 0;
-  space_xfrm = nullptr; // safety
+  space_xfrm = nullptr;  // safety
 
   /* Calculate image length. By default, is is pack_length() */
   m_max_image_len =
@@ -3853,7 +3864,7 @@ bool Rdb_field_packing::setup(const Rdb_key_def *const key_descr,
     } else {
       // This is [VAR]CHAR(n) and the collation is not $(charset_name)_bin
 
-      res = true; // index-only scans are possible
+      res = true;  // index-only scans are possible
       m_unpack_data_len = is_varchar ? 0 : field->field_length;
       const uint idx = is_varchar ? 0 : 1;
       const Rdb_collation_codec *codec = nullptr;
@@ -3868,23 +3879,27 @@ bool Rdb_field_packing::setup(const Rdb_key_def *const key_descr,
         // either.
         // Currently we handle these collations as NO_PAD, even if they have
         // PAD_SPACE attribute.
-        if (cs->levels_for_order == 1) {
+        // 8.0 removes levels_for_order but leaves levels_for_compare which
+        // seems to be identical in value and extremely similar in
+        // purpose/indication for our needs here.
+        if (cs->levels_for_compare == 1) {
           m_pack_func = &Rdb_key_def::pack_with_varchar_space_pad;
           m_skip_func = &Rdb_key_def::skip_variable_space_pad;
           m_segment_size = get_segment_size_from_collation(cs);
           m_max_image_len =
-              (max_image_len_before_chunks / (m_segment_size - 1) + 1) *
+              (max_image_len_before_chunks / (m_segment_size - 1) +
+               cs->mbmaxlen) *
               m_segment_size;
           rdb_get_mem_comparable_space(cs, &space_xfrm, &space_xfrm_len,
                                        &space_mb_len);
         } else {
-          //  NO_LINT_DEBUG
-          sql_print_warning("RocksDB: you're trying to create an index "
-                            "with a multi-level collation %s",
-                            cs->name);
-          //  NO_LINT_DEBUG
-          sql_print_warning("MyRocks will handle this collation internally "
-                            " as if it had a NO_PAD attribute.");
+          LogPluginErrMsg(
+              WARNING_LEVEL, 0,
+              "Trying to create an index with a multi-level collation %s",
+              cs->name);
+          LogPluginErrMsg(WARNING_LEVEL, 0,
+                          "Will handle this collation internally as if it had "
+                          "a NO_PAD attribute.");
           m_pack_func = &Rdb_key_def::pack_with_varchar_encoding;
           m_skip_func = &Rdb_key_def::skip_variable_length;
         }
@@ -3913,7 +3928,7 @@ bool Rdb_field_packing::setup(const Rdb_key_def *const key_descr,
         // Here, we just indicate to the SQL layer we can't do it.
         DBUG_ASSERT(m_unpack_func == nullptr);
         m_unpack_info_stores_value = false;
-        res = false; // Indicate that index-only reads are not possible
+        res = false;  // Indicate that index-only reads are not possible
       }
     }
 
@@ -4031,8 +4046,8 @@ bool Rdb_tbl_def::put_dict(Rdb_dict_manager *const dict,
       flags &= ~Rdb_key_def::CF_FLAGS_TO_IGNORE;
 
       if (existing_cf_flags != flags) {
-         my_error(ER_CF_DIFFERENT, MYF(0), cf_name.c_str(), flags,
-                  existing_cf_flags);
+        my_error(ER_CF_DIFFERENT, MYF(0), cf_name.c_str(), flags,
+                 existing_cf_flags);
         return true;
       }
     } else {
@@ -4107,7 +4122,9 @@ void Rdb_key_def::write_index_flag_field(Rdb_string_writer *const buf,
 
 void Rdb_tbl_def::check_if_is_mysql_system_table() {
   static const char *const system_dbs[] = {
-      "mysql", "performance_schema", "information_schema",
+      "mysql",
+      "performance_schema",
+      "information_schema",
   };
 
   m_is_mysql_system_table = false;
@@ -4167,7 +4184,7 @@ void Rdb_ddl_manager::remove_uncommitted_keydefs(
 }
 
 #if defined(ROCKSDB_INCLUDE_VALIDATE_TABLES) && ROCKSDB_INCLUDE_VALIDATE_TABLES
-namespace // anonymous namespace = not visible outside this source file
+namespace  // anonymous namespace = not visible outside this source file
 {
 struct Rdb_validate_tbls : public Rdb_tables_scanner {
   using tbl_info_t = std::pair<std::string, bool>;
@@ -4185,7 +4202,7 @@ struct Rdb_validate_tbls : public Rdb_tables_scanner {
   bool check_frm_file(const std::string &fullpath, const std::string &dbname,
                       const std::string &tablename, bool *has_errors);
 };
-} // anonymous namespace
+}  // anonymous namespace
 
 /*
   Get a list of tables that we expect to have .frm files for.  This will use the
@@ -4227,21 +4244,10 @@ bool Rdb_validate_tbls::check_frm_file(const std::string &fullpath,
   enum legacy_db_type eng_type;
   frm_type_enum type = dd_frm_type(nullptr, fullfilename.c_ptr(), &eng_type);
   if (type == FRMTYPE_ERROR) {
-    sql_print_warning("RocksDB: Failed to open/read .from file: %s",
-                      fullfilename.ptr());
+    LogPluginErrMsg(WARNING_LEVEL, 0, "Failed to open/read .from file: %s",
+                    fullfilename.ptr());
     return false;
   }
-
-  std::string partition_info_str;
-  if (!native_part::get_part_str_for_path(fullfilename.c_ptr(),
-                                          partition_info_str)) {
-    sql_print_warning("RocksDB: can't read partition info string from %s",
-                      fullfilename.ptr());
-    return false;
-  }
-
-  if (!partition_info_str.empty())
-    eng_type = DB_TYPE_PARTITION_DB;
 
   if (type == FRMTYPE_TABLE) {
     /* For a RocksDB table do we have a reference in the data dictionary? */
@@ -4252,10 +4258,10 @@ bool Rdb_validate_tbls::check_frm_file(const std::string &fullpath,
       */
       tbl_info_t element(tablename, false);
       if (m_list.count(dbname) == 0 || m_list[dbname].erase(element) == 0) {
-        sql_print_warning("RocksDB: Schema mismatch - "
-                          "A .frm file exists for table %s.%s, "
-                          "but that table is not registered in RocksDB",
-                          dbname.c_str(), tablename.c_str());
+        LogPluginErrMsg(WARNING_LEVEL, 0,
+                        "Schema mismatch - A .frm file exists for table %s.%s, "
+                        "but that table is not registered in RocksDB",
+                        dbname.c_str(), tablename.c_str());
         *has_errors = true;
       }
     } else if (eng_type == DB_TYPE_PARTITION_DB) {
@@ -4283,8 +4289,8 @@ bool Rdb_validate_tbls::scan_for_frms(const std::string &datadir,
 
   /* Access the directory */
   if (dir_info == nullptr) {
-    sql_print_warning("RocksDB: Could not open database directory: %s",
-                      fullpath.c_str());
+    LogPluginErrMsg(WARNING_LEVEL, 0, "Could not open database directory: %s",
+                    fullpath.c_str());
     return false;
   }
 
@@ -4329,7 +4335,8 @@ bool Rdb_validate_tbls::compare_to_actual_tables(const std::string &datadir,
 
   dir_info = my_dir(datadir.c_str(), MYF(MY_DONT_SORT | MY_WANT_STAT));
   if (dir_info == nullptr) {
-    sql_print_warning("RocksDB: could not open datadir: %s", datadir.c_str());
+    LogPluginErrMsg(WARNING_LEVEL, 0, "Could not open datadir: %s",
+                    datadir.c_str());
     return false;
   }
 
@@ -4391,22 +4398,20 @@ bool Rdb_ddl_manager::validate_auto_incr() {
     ptr += Rdb_key_def::INDEX_NUMBER_SIZE;
     rdb_netbuf_read_gl_index(&ptr, &gl_index_id);
     if (!m_dict->get_index_info(gl_index_id, nullptr)) {
-      // NO_LINT_DEBUG
-      sql_print_warning("RocksDB: AUTOINC mismatch - "
-                        "Index number (%u, %u) found in AUTOINC "
-                        "but does not exist as a DDL entry",
-                        gl_index_id.cf_id, gl_index_id.index_id);
+      LogPluginErrMsg(WARNING_LEVEL, 0,
+                      "AUTOINC mismatch - Index number (%u, %u) found in "
+                      "AUTOINC but does not exist as a DDL entry",
+                      gl_index_id.cf_id, gl_index_id.index_id);
       return false;
     }
 
     ptr = reinterpret_cast<const uchar *>(val.data());
     const int version = rdb_netbuf_read_uint16(&ptr);
     if (version > Rdb_key_def::AUTO_INCREMENT_VERSION) {
-      // NO_LINT_DEBUG
-      sql_print_warning("RocksDB: AUTOINC mismatch - "
-                        "Index number (%u, %u) found in AUTOINC "
-                        "is on unsupported version %d",
-                        gl_index_id.cf_id, gl_index_id.index_id, version);
+      LogPluginErrMsg(WARNING_LEVEL, 0,
+                      "AUTOINC mismatch - Index number (%u, %u) found in "
+                      "AUTOINC is on unsupported version %d",
+                      gl_index_id.cf_id, gl_index_id.index_id, version);
       return false;
     }
   }
@@ -4443,10 +4448,10 @@ bool Rdb_ddl_manager::validate_schemas(void) {
   */
   for (const auto &db : table_list.m_list) {
     for (const auto &table : db.second) {
-      sql_print_warning("RocksDB: Schema mismatch - "
-                        "Table %s.%s is registered in RocksDB "
-                        "but does not have a .frm file",
-                        db.first.c_str(), table.first.c_str());
+      LogPluginErrMsg(WARNING_LEVEL, 0,
+                      "Schema mismatch - Table %s.%s is registered in RocksDB "
+                      "but does not have a .frm file",
+                      db.first.c_str(), table.first.c_str());
       has_errors = true;
     }
   }
@@ -4492,8 +4497,9 @@ bool Rdb_ddl_manager::init(Rdb_dict_manager *const dict_arg,
       break;
 
     if (key.size() <= Rdb_key_def::INDEX_NUMBER_SIZE) {
-      sql_print_error("RocksDB: Table_store: key has length %d (corruption?)",
-                      (int)key.size());
+      LogPluginErrMsg(ERROR_LEVEL, 0,
+                      "Table_store: key has length %d (corruption?)",
+                      static_cast<int>(key.size()));
       return true;
     }
 
@@ -4503,7 +4509,8 @@ bool Rdb_ddl_manager::init(Rdb_dict_manager *const dict_arg,
     // Now, read the DDLs.
     const int real_val_size = val.size() - Rdb_key_def::VERSION_SIZE;
     if (real_val_size % Rdb_key_def::PACKED_SIZE * 2 > 0) {
-      sql_print_error("RocksDB: Table_store: invalid keylist for table %s",
+      LogPluginErrMsg(ERROR_LEVEL, 0,
+                      "Table_store: invalid keylist for table %s",
                       tdef->full_tablename().c_str());
       return true;
     }
@@ -4513,9 +4520,10 @@ bool Rdb_ddl_manager::init(Rdb_dict_manager *const dict_arg,
     ptr = reinterpret_cast<const uchar *>(val.data());
     const int version = rdb_netbuf_read_uint16(&ptr);
     if (version != Rdb_key_def::DDL_ENTRY_INDEX_VERSION) {
-      sql_print_error("RocksDB: DDL ENTRY Version was not expected."
-                      "Expected: %d, Actual: %d",
-                      Rdb_key_def::DDL_ENTRY_INDEX_VERSION, version);
+      LogPluginErrMsg(
+          ERROR_LEVEL, 0,
+          "DDL ENTRY Version was not expected. Expected: %d, Actual: %d",
+          Rdb_key_def::DDL_ENTRY_INDEX_VERSION, version);
       return true;
     }
     ptr_end = ptr + real_val_size;
@@ -4525,32 +4533,36 @@ bool Rdb_ddl_manager::init(Rdb_dict_manager *const dict_arg,
       uint flags = 0;
       struct Rdb_index_info index_info;
       if (!m_dict->get_index_info(gl_index_id, &index_info)) {
-        sql_print_error("RocksDB: Could not get index information "
-                        "for Index Number (%u,%u), table %s",
+        LogPluginErrMsg(ERROR_LEVEL, 0,
+                        "Could not get index information for Index Number "
+                        "(%u,%u), table %s",
                         gl_index_id.cf_id, gl_index_id.index_id,
                         tdef->full_tablename().c_str());
         return true;
       }
       if (max_index_id_in_dict < gl_index_id.index_id) {
-        sql_print_error("RocksDB: Found max index id %u from data dictionary "
-                        "but also found larger index id %u from dictionary. "
-                        "This should never happen and possibly a bug.",
+        LogPluginErrMsg(ERROR_LEVEL, 0,
+                        "Found max index id %u from data dictionary but also "
+                        "found larger index id %u from dictionary. This should "
+                        "never happen and possibly a bug.",
                         max_index_id_in_dict, gl_index_id.index_id);
         return true;
       }
       if (!m_dict->get_cf_flags(gl_index_id.cf_id, &flags)) {
-        sql_print_error("RocksDB: Could not get Column Family Flags "
-                        "for CF Number %d, table %s",
-                        gl_index_id.cf_id, tdef->full_tablename().c_str());
+        LogPluginErrMsg(
+            ERROR_LEVEL, 0,
+            "Could not get Column Family Flags for CF Number %d, table %s",
+            gl_index_id.cf_id, tdef->full_tablename().c_str());
         return true;
       }
 
       if ((flags & Rdb_key_def::AUTO_CF_FLAG) != 0) {
         // The per-index cf option is deprecated.  Make sure we don't have the
-        // flag set in any existing database.   NO_LINT_DEBUG
-        sql_print_error("RocksDB: The defunct AUTO_CF_FLAG is enabled for CF "
-                        "number %d, table %s",
-                        gl_index_id.cf_id, tdef->full_tablename().c_str());
+        // flag set in any existing database.
+        LogPluginErrMsg(
+            ERROR_LEVEL, 0,
+            "The defunct AUTO_CF_FLAG is enabled for CF number %d, table %s",
+            gl_index_id.cf_id, tdef->full_tablename().c_str());
       }
 
       rocksdb::ColumnFamilyHandle *const cfh =
@@ -4596,8 +4608,7 @@ bool Rdb_ddl_manager::init(Rdb_dict_manager *const dict_arg,
             "data dictionary, exiting";
     }
     if (validate_tables == 1 && !msg.empty()) {
-      // NO_LINT_DEBUG
-      sql_print_error("%s", msg.c_str());
+      LogPluginErrMsg(ERROR_LEVEL, 0, "%s", msg.c_str());
       return true;
     }
   }
@@ -4617,8 +4628,8 @@ bool Rdb_ddl_manager::init(Rdb_dict_manager *const dict_arg,
     return true;
   }
   delete it;
-  sql_print_information("RocksDB: Table_store: loaded DDL data for %d tables",
-                        i);
+  LogPluginErrMsg(INFORMATION_LEVEL, 0,
+                  "Table_store: loaded DDL data for %d tables", i);
   return false;
 }
 
@@ -4895,7 +4906,7 @@ bool Rdb_ddl_manager::rename(const std::string &from, const std::string &to,
   if (!new_rec->put_dict(m_dict, batch, new_buf, new_pos)) {
     remove(rec, batch, false);
     put(new_rec, false);
-    res = false; // ok
+    res = false;  // ok
   }
 
   mysql_rwlock_unlock(&m_rwlock);
@@ -5011,7 +5022,7 @@ int Rdb_dict_manager::commit(rocksdb::WriteBatch *const batch,
   rocksdb::TransactionDBWriteOptimizations optimize;
   optimize.skip_concurrency_control = true;
   rocksdb::Status s = m_db->Write(options, optimize, batch);
-  res = !s.ok(); // we return true when something failed
+  res = !s.ok();  // we return true when something failed
   if (res) {
     rdb_handle_io_error(s, RDB_IO_ERROR_DICT_COMMIT);
   }
@@ -5187,13 +5198,13 @@ bool Rdb_dict_manager::get_index_info(
   }
 
   if (error) {
-    // NO_LINT_DEBUG
-    sql_print_error(
-        "RocksDB: Found invalid key version number (%u, %u, %u, %llu) "
-        "from data dictionary. This should never happen "
-        "and it may be a bug.",
-        index_info->m_index_dict_version, index_info->m_index_type,
-        index_info->m_kv_version, index_info->m_ttl_duration);
+    LogPluginErrMsg(ERROR_LEVEL, 0,
+                    "Found invalid key version number (%u, %u, %u, %llu) from "
+                    "data dictionary. This should never happen and it may be a "
+                    "bug.",
+                    index_info->m_index_dict_version, index_info->m_index_type,
+                    index_info->m_kv_version,
+                    (ulonglong)(index_info->m_ttl_duration));
     abort();
   }
 
@@ -5390,9 +5401,8 @@ void Rdb_dict_manager::add_create_index(
     const std::unordered_set<GL_INDEX_ID> &gl_index_ids,
     rocksdb::WriteBatch *const batch) const {
   for (const auto &gl_index_id : gl_index_ids) {
-    // NO_LINT_DEBUG
-    sql_print_information("RocksDB: Begin index creation (%u,%u)",
-                          gl_index_id.cf_id, gl_index_id.index_id);
+    LogPluginErrMsg(INFORMATION_LEVEL, 0, "Begin index creation (%u,%u)",
+                    gl_index_id.cf_id, gl_index_id.index_id);
     start_create_index(batch, gl_index_id);
   }
 }
@@ -5451,12 +5461,12 @@ void Rdb_dict_manager::resume_drop_indexes() const {
   for (const auto &gl_index_id : gl_index_ids) {
     log_start_drop_index(gl_index_id, "Resume");
     if (max_index_id_in_dict < gl_index_id.index_id) {
-      sql_print_error("RocksDB: Found max index id %u from data dictionary "
-                      "but also found dropped index id (%u,%u) from drop_index "
-                      "dictionary. This should never happen and is possibly a "
-                      "bug.",
-                      max_index_id_in_dict, gl_index_id.cf_id,
-                      gl_index_id.index_id);
+      LogPluginErrMsg(
+          ERROR_LEVEL, 0,
+          "Found max index id %u from data dictionary but also found dropped "
+          "index id (%u,%u) from drop_index dictionary. This should never "
+          "happen and is possibly a bug.",
+          max_index_id_in_dict, gl_index_id.cf_id, gl_index_id.index_id);
       abort();
     }
   }
@@ -5470,9 +5480,9 @@ void Rdb_dict_manager::rollback_ongoing_index_creation() const {
   get_ongoing_create_indexes(&gl_index_ids);
 
   for (const auto &gl_index_id : gl_index_ids) {
-    // NO_LINT_DEBUG
-    sql_print_information("RocksDB: Removing incomplete create index (%u,%u)",
-                          gl_index_id.cf_id, gl_index_id.index_id);
+    LogPluginErrMsg(INFORMATION_LEVEL, 0,
+                    "Removing incomplete create index (%u,%u)",
+                    gl_index_id.cf_id, gl_index_id.index_id);
 
     start_drop_index(batch, gl_index_id);
   }
@@ -5502,9 +5512,9 @@ void Rdb_dict_manager::log_start_drop_index(GL_INDEX_ID gl_index_id,
 
     if (!incomplete_create_indexes.count(gl_index_id)) {
       /* If it's not a partially created index, something is very wrong. */
-      sql_print_error("RocksDB: Failed to get column family info "
-                      "from index id (%u,%u). MyRocks data dictionary may "
-                      "get corrupted.",
+      LogPluginErrMsg(ERROR_LEVEL, 0,
+                      "Failed to get column family info from index id (%u,%u). "
+                      "MyRocks data dictionary may get corrupted.",
                       gl_index_id.cf_id, gl_index_id.index_id);
       abort();
     }
@@ -5534,9 +5544,10 @@ bool Rdb_dict_manager::update_max_index_id(rocksdb::WriteBatch *const batch,
   uint32_t old_index_id = -1;
   if (get_max_index_id(&old_index_id)) {
     if (old_index_id > index_id) {
-      sql_print_error("RocksDB: Found max index id %u from data dictionary "
-                      "but trying to update to older value %u. This should "
-                      "never happen and possibly a bug.",
+      LogPluginErrMsg(ERROR_LEVEL, 0,
+                      "Found max index id %u from data dictionary but trying "
+                      "to update to older value %u. This should never happen "
+                      "and possibly a bug.",
                       old_index_id, index_id);
       return true;
     }
@@ -5592,8 +5603,8 @@ Rdb_index_stats Rdb_dict_manager::get_stats(GL_INDEX_ID gl_index_id) const {
 
 rocksdb::Status
 Rdb_dict_manager::put_auto_incr_val(rocksdb::WriteBatchBase *batch,
-                                    GL_INDEX_ID gl_index_id,
-                                    ulonglong val, bool overwrite) const {
+                                    GL_INDEX_ID gl_index_id, ulonglong val,
+                                    bool overwrite) const {
   uchar key_buf[Rdb_key_def::INDEX_NUMBER_SIZE * 3] = {0};
   dump_index_id(key_buf, Rdb_key_def::AUTO_INC, gl_index_id);
   const rocksdb::Slice key =
@@ -5658,4 +5669,4 @@ uint Rdb_seq_generator::get_and_update_next_number(
   return res;
 }
 
-} // namespace myrocks
+}  // namespace myrocks

@@ -1,7 +1,6 @@
 #
 # Test the single-page flush code path in the doublewrite
 #
---source include/have_innodb.inc
 
 # This test could be non-deterministic. If we observe this, convert it to a debug build
 # test that explicitly stops cleaner/LRU manager threads for the workload.

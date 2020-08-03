@@ -13,8 +13,10 @@ INSERT INTO t1 (f1) VALUES (FLOOR( 1 + RAND( ) * 65535 ));
 END WHILE;
 END|
 CALL proc_insert();;
-SELECT VARIABLE_VALUE > 0 FROM performance_schema.global_status WHERE VARIABLE_NAME = 'wsrep_local_replays';
-VARIABLE_VALUE > 0
+select sleep(0.5);
+sleep(0.5)
+0
+wsrep_local_replays
 1
 DROP PROCEDURE proc_insert;
 DROP TABLE t1;

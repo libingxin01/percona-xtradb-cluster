@@ -1,0 +1,13 @@
+
+.. |cfname| replace:: `cf_name`
+.. |cf-name| replace:: `cf_name`
+
+.. |cf| replace:: column family
+.. |column-family| replace:: column family
+
+.. |sql.comment| replace:: ``COMMENT``
+.. |sql.create-table| replace:: ``CREATE TABLE``
+.. |sql.alter-table| replace:: ``ALTER TABLE``
+.. |sql.upgrade-partitioning| replace:: ``UPGRADE PARTITIONING``
+
+.. |pxb-encryption| replace:: XtraBackup-based Encryption

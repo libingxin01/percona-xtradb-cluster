@@ -24,9 +24,8 @@
 #include <vector>
 
 /* MySQL header files */
-#include "../sql/log.h"
-#include "./my_dir.h"
-#include "sql_class.h"
+#include "my_dir.h"
+#include "sql/sql_class.h"
 
 /* RocksDB header files */
 #include "rocksdb/db.h"
@@ -82,9 +81,8 @@ rocksdb::Status Rdb_sst_file_ordered::Rdb_sst_file::open() {
 
   s = m_sst_file_writer->Open(m_name);
   if (m_tracing) {
-    // NO_LINT_DEBUG
-    sql_print_information("SST Tracing: Open(%s) returned %s", m_name.c_str(),
-                          s.ok() ? "ok" : "not ok");
+    LogPluginErrMsg(INFORMATION_LEVEL, 0, "SST Tracing: Open(%s) returned %s",
+                    m_name.c_str(), s.ok() ? "ok" : "not ok");
   }
 
   if (!s.ok()) {
@@ -129,26 +127,24 @@ rocksdb::Status Rdb_sst_file_ordered::Rdb_sst_file::commit() {
   DBUG_ASSERT(m_sst_file_writer != nullptr);
 
   rocksdb::Status s;
-  rocksdb::ExternalSstFileInfo fileinfo; /// Finish may should be modified
+  rocksdb::ExternalSstFileInfo fileinfo;  /// Finish may should be modified
 
   // Close out the sst file
   s = m_sst_file_writer->Finish(&fileinfo);
   if (m_tracing) {
-    // NO_LINT_DEBUG
-    sql_print_information("SST Tracing: Finish returned %s",
-                          s.ok() ? "ok" : "not ok");
+    LogPluginErrMsg(INFORMATION_LEVEL, 0, "SST Tracing: Finish returned %s",
+                    s.ok() ? "ok" : "not ok");
   }
 
   if (s.ok()) {
     if (m_tracing) {
-      // NO_LINT_DEBUG
-      sql_print_information("SST Tracing: Adding file %s, smallest key: %s, "
-                            "largest key: %s, file size: %lu, "
-                            "num_entries: %lu",
-                            fileinfo.file_path.c_str(),
-                            generateKey(fileinfo.smallest_key).c_str(),
-                            generateKey(fileinfo.largest_key).c_str(),
-                            fileinfo.file_size, fileinfo.num_entries);
+      LogPluginErrMsg(INFORMATION_LEVEL, 0,
+                      "SST Tracing: Adding file %s, smallest key: %s, "
+                      "largest key: %s, file size: %lu, num_entries: %lu",
+                      fileinfo.file_path.c_str(),
+                      generateKey(fileinfo.smallest_key).c_str(),
+                      generateKey(fileinfo.largest_key).c_str(),
+                      fileinfo.file_size, fileinfo.num_entries);
     }
 
     // Add the file to the database
@@ -162,10 +158,9 @@ rocksdb::Status Rdb_sst_file_ordered::Rdb_sst_file::commit() {
     s = m_db->IngestExternalFile(m_cf, {m_name}, opts);
 
     if (m_tracing) {
-      // NO_LINT_DEBUG
-      sql_print_information("SST Tracing: AddFile(%s) returned %s",
-                            fileinfo.file_path.c_str(),
-                            s.ok() ? "ok" : "not ok");
+      LogPluginErrMsg(INFORMATION_LEVEL, 0,
+                      "SST Tracing: AddFile(%s) returned %s",
+                      fileinfo.file_path.c_str(), s.ok() ? "ok" : "not ok");
     }
   }
 
@@ -331,8 +326,9 @@ Rdb_sst_info::Rdb_sst_info(rocksdb::DB *const db, const std::string &tablename,
   if (rdb_normalize_tablename(tablename.c_str(), &normalized_table)) {
     // We failed to get a normalized table name.  This should never happen,
     // but handle it anyway.
-    m_prefix += "fallback_" + std::to_string(reinterpret_cast<intptr_t>(
-                                  reinterpret_cast<void *>(this))) +
+    m_prefix += "fallback_" +
+                std::to_string(reinterpret_cast<intptr_t>(
+                    reinterpret_cast<void *>(this))) +
                 "_" + indexname + "_";
   } else {
     m_prefix += normalized_table + "_" + indexname + "_";
@@ -369,8 +365,8 @@ int Rdb_sst_info::open_new_sst_file() {
   const std::string name = m_prefix + std::to_string(m_sst_count++) + m_suffix;
 
   // Create the new sst file object
-  m_sst_file = new Rdb_sst_file_ordered(m_db, m_cf, m_db_options,
-                                        name, m_tracing, m_max_size);
+  m_sst_file = new Rdb_sst_file_ordered(m_db, m_cf, m_db_options, name,
+                                        m_tracing, m_max_size);
 
   // Open the sst file
   const rocksdb::Status s = m_sst_file->open();
@@ -525,8 +521,9 @@ void Rdb_sst_info::set_error_msg(const std::string &sst_file_name,
   } else if (s.IsInvalidArgument() &&
              strcmp(s.getState(), "Global seqno is required, but disabled") ==
                  0) {
-    my_printf_error(ER_OVERLAPPING_KEYS, "Rows inserted during bulk load "
-                                         "must not overlap existing rows",
+    my_printf_error(ER_OVERLAPPING_KEYS,
+                    "Rows inserted during bulk load "
+                    "must not overlap existing rows",
                     MYF(0));
   } else {
     my_printf_error(ER_UNKNOWN_ERROR, "[%s] bulk load error: %s", MYF(0),
@@ -578,13 +575,12 @@ void Rdb_sst_info::run_thread() {
 
 void Rdb_sst_info::init(const rocksdb::DB *const db) {
   const std::string path = db->GetName() + FN_DIRSEP;
-  struct st_my_dir *const dir_info = my_dir(path.c_str(), MYF(MY_DONT_SORT));
+  MY_DIR *const dir_info = my_dir(path.c_str(), MYF(MY_DONT_SORT));
 
   // Access the directory
   if (dir_info == nullptr) {
-    // NO_LINT_DEBUG
-    sql_print_warning("RocksDB: Could not access database directory: %s",
-                      path.c_str());
+    LogPluginErrMsg(WARNING_LEVEL, 0, "Could not access database directory: %s",
+                    path.c_str());
     return;
   }
 
@@ -607,4 +603,4 @@ void Rdb_sst_info::init(const rocksdb::DB *const db) {
 
 std::atomic<uint64_t> Rdb_sst_info::m_prefix_counter(0);
 std::string Rdb_sst_info::m_suffix = ".bulk_load.tmp";
-} // namespace myrocks
+}  // namespace myrocks

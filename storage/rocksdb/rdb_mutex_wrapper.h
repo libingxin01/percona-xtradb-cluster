@@ -36,7 +36,7 @@ class Rdb_mutex : public rocksdb::TransactionDBMutex {
   Rdb_mutex(const Rdb_mutex &p) = delete;
   Rdb_mutex &operator=(const Rdb_mutex &p) = delete;
 
-public:
+ public:
   Rdb_mutex();
   virtual ~Rdb_mutex();
 
@@ -54,13 +54,13 @@ public:
   //         TimedOut if timed out,
   //         or other Status on failure.
   // If returned status is OK, TransactionDB will eventually call UnLock().
-  virtual rocksdb::Status TryLockFor(int64_t timeout_time
-                                     MY_ATTRIBUTE((__unused__))) override;
+  virtual rocksdb::Status
+  TryLockFor(int64_t timeout_time MY_ATTRIBUTE((__unused__))) override;
 
   // Unlock Mutex that was successfully locked by Lock() or TryLockUntil()
   virtual void UnLock() override;
 
-private:
+ private:
   mysql_mutex_t m_mutex;
   friend class Rdb_cond_var;
 
@@ -74,7 +74,7 @@ class Rdb_cond_var : public rocksdb::TransactionDBCondVar {
   Rdb_cond_var(const Rdb_cond_var &) = delete;
   Rdb_cond_var &operator=(const Rdb_cond_var &) = delete;
 
-public:
+ public:
 #ifdef HAVE_PSI_INTERFACE
   explicit Rdb_cond_var(PSI_memory_key psi_key);
 #else
@@ -117,12 +117,12 @@ public:
   // Unblocks all threads waiting on *this.
   virtual void NotifyAll() override;
 
-private:
+ private:
   mysql_cond_t m_cond;
 };
 
 class Rdb_mutex_factory : public rocksdb::TransactionDBMutexFactory {
-public:
+ public:
   Rdb_mutex_factory(const Rdb_mutex_factory &) = delete;
   Rdb_mutex_factory &operator=(const Rdb_mutex_factory &) = delete;
   Rdb_mutex_factory() {}
@@ -150,4 +150,4 @@ public:
   virtual ~Rdb_mutex_factory() {}
 };
 
-} // namespace myrocks
+}  // namespace myrocks

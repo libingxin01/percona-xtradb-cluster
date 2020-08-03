@@ -27,6 +27,9 @@
 #include <utility>
 #include <vector>
 
+/* MySQL header files */
+#include "include/my_sys.h"
+
 /* RocksDB header files */
 #include "rocksdb/db.h"
 #include "rocksdb/sst_file_writer.h"
@@ -183,4 +186,4 @@ class Rdb_sst_info {
   static void init(const rocksdb::DB *const db);
 };
 
-} // namespace myrocks
+}  // namespace myrocks

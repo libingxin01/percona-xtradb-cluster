@@ -6,7 +6,6 @@
 # Exec_Master_Log_Pos advances as expected.
 
 -- source include/have_log_bin.inc
--- source include/have_innodb.inc
 -- source include/have_myisam.inc
 
 
@@ -357,7 +356,7 @@ if (`select @@binlog_format = 'ROW'`)
 
 if (`select @@binlog_format = 'STATEMENT' || @@binlog_format = 'MIXED'`)
 {
-  --exec $MYSQL_BINLOG --start-position=$binlog_rollback_position $MYSQLD_DATADIR/master-bin.000001 > $MYSQLTEST_VARDIR/tmp/mix_innodb_myisam_binlog.output
+  --exec $MYSQL_BINLOG --start-position=$binlog_rollback_position $MYSQLD_DATADIR/binlog.000001 > $MYSQLTEST_VARDIR/tmp/mix_innodb_myisam_binlog.output
 
   --replace_result $MYSQLTEST_VARDIR MYSQLTEST_VARDIR
   eval select
@@ -663,6 +662,9 @@ CREATE TABLE t5 (a int, PRIMARY KEY (a)) ENGINE=InnoDB;
 drop trigger trg_del_t2;
 drop table t1,t2,t3,t4,t5;
 drop function bug27417;
+if (`SELECT @@binlog_format = 'STATEMENT' || @@binlog_format = 'MIXED'`) {
+  --remove_file $MYSQLTEST_VARDIR/tmp/mix_innodb_myisam_binlog.output
+}
 
 
 --echo end of tests

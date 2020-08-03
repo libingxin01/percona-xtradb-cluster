@@ -1,16 +1,13 @@
 # InnoDB transparent encryption on redo log.
 # This test case will test basic encryption support features.
 --source include/no_valgrind_without_big.inc
---source include/have_innodb.inc
---source include/not_embedded.inc
 --source include/have_innodb_max_16k.inc
 
---disable_query_log
+call mtr.add_suppression("ibd can't be decrypted, please confirm the keyfile is match and keyring plugin is loaded.");
 call mtr.add_suppression("Encryption can't find master key, please check the keyring plugin is loaded.");
-call mtr.add_suppression("Redo log cannot be encrypted, if the keyring plugin is not loaded.");
-call mtr.add_suppression("keyring error: please check that a keyring plugin is loaded.");
+call mtr.add_suppression("Redo log cannot be encrypted if the keyring plugin is not loaded.");
+call mtr.add_suppression("Check keyring plugin fail, please check the keyring plugin is loaded.");
 call mtr.add_suppression("Redo log key generation failed.");
---enable_query_log
 
 let $old_innodb_file_per_table = `SELECT @@innodb_file_per_table`;
 let $old_innodb_redo_log_encrypt = `SELECT @@innodb_redo_log_encrypt`;

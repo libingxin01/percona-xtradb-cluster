@@ -3,9 +3,9 @@ RESET MASTER;
 RESET MASTER;
 wsrep_last_applied_correct
 1
-SHOW BINLOG EVENTS FROM 123;
+SHOW BINLOG EVENTS FROM 124;
 Log_name	Pos	Event_type	Server_id	End_log_pos	Info
-mysqld-bin.000001	123	Previous_gtids	1	154	
+mysqld-bin.000001	124	Previous_gtids	1	155	
 RESET MASTER;
 RESET MASTER;
 wsrep_last_applied_correct
@@ -16,31 +16,31 @@ COUNT(*) = 1
 SELECT COUNT(*) = 1 FROM t1;
 COUNT(*) = 1
 1
-SHOW BINLOG EVENTS FROM 123;
+SHOW BINLOG EVENTS FROM 124;
 Log_name	Pos	Event_type	Server_id	End_log_pos	Info
-mysqld-bin.000001	123	Previous_gtids	1	154	
-mysqld-bin.000001	154	Anonymous_Gtid	1	219	SET @@SESSION.GTID_NEXT= 'ANONYMOUS'
-mysqld-bin.000001	219	Query	1	296	BEGIN
-mysqld-bin.000001	296	Table_map	1	341	table_id: ### (test.t1)
-mysqld-bin.000001	341	Write_rows	1	381	table_id: ### flags: STMT_END_F
-mysqld-bin.000001	381	Xid	1	412	COMMIT /* xid=### */
-SHOW BINLOG EVENTS FROM 123;
+mysqld-bin.000001	124	Previous_gtids	1	155	
+mysqld-bin.000001	155	Anonymous_Gtid	1	234	SET @@SESSION.GTID_NEXT= 'ANONYMOUS'
+mysqld-bin.000001	234	Query	1	314	BEGIN
+mysqld-bin.000001	314	Table_map	1	362	table_id: ### (test.t1)
+mysqld-bin.000001	362	Write_rows	1	402	table_id: ### flags: STMT_END_F
+mysqld-bin.000001	402	Xid	1	433	COMMIT /* xid=### */
+SHOW BINLOG EVENTS FROM 124;
 Log_name	Pos	Event_type	Server_id	End_log_pos	Info
-mysqld-bin.000001	123	Previous_gtids	2	154	
-mysqld-bin.000001	154	Anonymous_Gtid	1	219	SET @@SESSION.GTID_NEXT= 'ANONYMOUS'
-mysqld-bin.000001	219	Query	1	287	BEGIN
-mysqld-bin.000001	287	Table_map	1	332	table_id: ### (test.t1)
-mysqld-bin.000001	332	Write_rows	1	372	table_id: ### flags: STMT_END_F
-mysqld-bin.000001	372	Xid	1	403	COMMIT /* xid=### */
+mysqld-bin.000001	124	Previous_gtids	2	155	
+mysqld-bin.000001	155	Anonymous_Gtid	1	234	SET @@SESSION.GTID_NEXT= 'ANONYMOUS'
+mysqld-bin.000001	234	Query	1	309	BEGIN
+mysqld-bin.000001	309	Table_map	1	357	table_id: ### (test.t1)
+mysqld-bin.000001	357	Write_rows	1	397	table_id: ### flags: STMT_END_F
+mysqld-bin.000001	397	Xid	1	428	COMMIT /* xid=### */
 TRUNCATE TABLE t1;
 RESET MASTER;
-ERROR 23000: Duplicate entry '1' for key 'PRIMARY'
+ERROR 23000: Duplicate entry '1' for key 't1.PRIMARY'
 wsrep_last_applied_correct
 1
 SELECT COUNT(*) = 0 FROM t1;
 COUNT(*) = 0
 1
-SHOW BINLOG EVENTS FROM 123;
+SHOW BINLOG EVENTS FROM 124;
 Log_name	Pos	Event_type	Server_id	End_log_pos	Info
-mysqld-bin.000001	123	Previous_gtids	1	154	
+mysqld-bin.000001	124	Previous_gtids	1	155	
 DROP TABLE t1;

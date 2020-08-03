@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# Copyright (c) 2011, 2013, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2011, 2017, Oracle and/or its affiliates. All rights reserved.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License, version 2.0,
@@ -27,9 +27,9 @@ set -e
 : ${load:=1}
 : ${loops:=100}
 : ${queries:=1000}
-: ${host:=loki43}
+: ${host:=localhost}
 : ${port:=4401}
-: ${RQG_HOME:=/net/fimafeng09/export/home/tmp/oleja/mysql/randgen/randgen-2.2.0}
+: ${RQG_HOME:=/home/oaske/randgen/latest}
 
 
 while getopts ":nm:r:l:h:p:" opt; do
@@ -95,9 +95,12 @@ gensql=${RQG_HOME}/gensql.pl
 gendata=${RQG_HOME}/gendata.pl
 ecp="set optimizer_switch = 'engine_condition_pushdown=on';"
 
-dsn=dbi:mysql:host=${host}:port=${port}:user=root:database=${pre}_innodb
-mysqltest="$MYSQLINSTALL/bin/mysqltest -uroot --host=${host} --port=${port}"
-mysql="$MYSQLINSTALL/bin/mysql --host=${host} --port=${port}"
+#dsn=dbi:mysql:host=${host}:port=${port}:user=root:database=${pre}_innodb
+#mysqltest="$MYSQLINSTALL/bin/mysqltest -uroot --host=${host} --port=${port}"
+dsn=dbi:mysql:host=${host}:mysql_socket=/tmp/mysql.sock:user=root:database=${pre}_innodb
+mysqltest="$MYSQLINSTALL/bin/mysqltest -uroot --port=${port}"
+#mysql="$MYSQLINSTALL/bin/mysql --host=${host} --port=${port} --user=root"
+mysql="$MYSQLINSTALL/bin/mysql --port=${port} --user=root"
 
 # Create database with a case sensitive collation to ensure a deterministic 
 # resultset when 'LIMIT' is specified:
@@ -111,6 +114,7 @@ then
 	$mysql -uroot -e "create database ${pre}_innodb ${charset_spec}; create database ${pre}_ndb ${charset_spec}"
 	${gendata} --dsn=$dsn ${data}
 cat > /tmp/sproc.$$ <<EOF
+
 DROP PROCEDURE IF EXISTS copydb;
 delimiter |;
 CREATE PROCEDURE copydb(dstdb varchar(64), srcdb varchar(64),
@@ -302,6 +306,7 @@ BEGIN
 END
 \G
 
+DROP PROCEDURE IF EXISTS analyzedb\G
 CREATE PROCEDURE analyzedb(db varchar(64))
 BEGIN
 
@@ -360,7 +365,7 @@ check_query(){
 $ecp
 --echo kalle
 --sorted_result
---error 0,233,1242,4006
+--error 0,233,1242,4006,1055
 $sql
 --exit
 EOF
@@ -460,7 +465,7 @@ do
 	echo "--eval set ndb_join_pushdown='\$NDB_JOIN_PUSHDOWN';"
 	echo "$ecp"
 	${gensql} --seed=$us --queries=$queries --dsn=$dsn --grammar=$grammar|
-        awk '{ print "--sorted_result"; print "--error 0,233,1242,4006"; print; }'
+        awk '{ print "--sorted_result"; print "--error 0,233,1055,1242,4006"; print; }'
 	echo "--exit"
     ) > ${opre}_test.sql
 

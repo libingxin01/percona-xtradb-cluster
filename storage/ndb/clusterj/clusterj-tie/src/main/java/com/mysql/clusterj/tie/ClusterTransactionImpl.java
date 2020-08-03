@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) 2009, 2015, Oracle and/or its affiliates. All rights reserved.
+ *  Copyright (c) 2009, 2018, Oracle and/or its affiliates. All rights reserved.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License, version 2.0,
@@ -160,7 +160,7 @@ class ClusterTransactionImpl implements ClusterTransaction {
      * Otherwise, use the partition key to enlist the transaction.
      */
     private void enlist() {
-        db.assertOpen("ClusterTransactionImpl.enlist");
+        db.assertNotClosed("ClusterTransactionImpl.enlist");
         if (logger.isTraceEnabled()) logger.trace("ndbTransaction: " + ndbTransaction
                 + " with joinTransactionId: " + joinTransactionId);
         if (ndbTransaction == null) {
@@ -174,7 +174,7 @@ class ClusterTransactionImpl implements ClusterTransaction {
     }
 
     public void executeCommit(boolean abort, boolean force) {
-        db.assertOpen("ClusterTransactionImpl.executeCommit");
+        db.assertNotClosed("ClusterTransactionImpl.executeCommit");
         if (logger.isTraceEnabled()) logger.trace("");
         // nothing to do if no ndbTransaction was ever enlisted or already autocommitted
         if (isEnlisted() && !autocommitted) {
@@ -194,7 +194,7 @@ class ClusterTransactionImpl implements ClusterTransaction {
     }
 
     public void executeNoCommit(boolean abort, boolean force) {
-        db.assertOpen("ClusterTransactionImpl.executeNoCommit");
+        db.assertNotClosed("ClusterTransactionImpl.executeNoCommit");
         if (logger.isTraceEnabled()) logger.trace("");
         if (!isEnlisted()) {
             // nothing to do if no ndbTransaction was ever enlisted
@@ -215,7 +215,7 @@ class ClusterTransactionImpl implements ClusterTransaction {
     }
 
     public void executeRollback() {
-        db.assertOpen("ClusterTransactionImpl.executeRollback");
+        db.assertNotClosed("ClusterTransactionImpl.executeRollback");
         if (!isEnlisted()) {
             // nothing to do if no ndbTransaction was ever enlisted
             return;
@@ -477,7 +477,10 @@ class ClusterTransactionImpl implements ClusterTransaction {
     public NdbIndexScanOperation scanIndex(NdbRecordConst key_record, NdbRecordConst result_record,
             byte[] result_mask, ScanOptions scanOptions) {
         enlist();
-        return ndbTransaction.scanIndex(key_record, result_record, indexScanLockMode, result_mask, null, scanOptions, 0);
+        NdbIndexScanOperation operation =
+                ndbTransaction.scanIndex(key_record, result_record, indexScanLockMode, result_mask, null, scanOptions, 0);
+        handleError(operation, ndbTransaction);
+        return operation;
     }
 
     /** Create an NdbOperation for delete using NdbRecord.

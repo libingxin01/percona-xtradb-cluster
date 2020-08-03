@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2003, 2014, Oracle and/or its affiliates. All rights reserved.
+   Copyright (c) 2003, 2019, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -42,6 +42,14 @@ void Qmgr::initData()
   for (Uint32 i = 0; i<MAX_NODES; i++)
   {
     nodeRec[i].m_secret = 0;
+  }
+
+  nodeFailRec = new NodeFailRec[MAX_DATA_NODE_FAILURES];
+  for (Uint32 i = 0; i < MAX_DATA_NODE_FAILURES; i++)
+  {
+    nodeFailRec[i].nodes.clear();
+    nodeFailRec[i].failureNr = 0;
+    nodeFailRec[i].president = 0;
   }
 
   c_maxDynamicId = 0;
@@ -140,6 +148,28 @@ void Qmgr::initData()
     nodePtr.p->sendPresToStatus = Q_NOT_ACTIVE;
     nodePtr.p->failState = NORMAL;
   }//for
+
+  /* Received ProcessInfo are indirectly addressed:
+     nodeId => fixed array lookup => dynamic array.
+     The dynamic array contains enough entries for all
+     configured MGM and API nodes.
+  */
+  int numOfApiAndMgmNodes = 0;
+  for (int i = 1; i < MAX_NODES; i++)
+  {
+    Uint32 type = getNodeInfo(i).m_type;
+    switch(type){
+    case NodeInfo::API:
+    case NodeInfo::MGM:
+      processInfoNodeIndex[i] = numOfApiAndMgmNodes++;
+      max_api_node_id = i;
+      break;
+    default:
+      processInfoNodeIndex[i] = -1;
+      break;
+    }
+  }
+  receivedProcessInfo = new ProcessInfo[numOfApiAndMgmNodes];
 }//Qmgr::initData()
 
 void Qmgr::initRecords()
@@ -195,7 +225,9 @@ Qmgr::Qmgr(Block_context& ctx)
   addRecSignal(GSN_ALLOC_NODEID_CONF,  &Qmgr::execALLOC_NODEID_CONF);
   addRecSignal(GSN_ALLOC_NODEID_REF,  &Qmgr::execALLOC_NODEID_REF);
   addRecSignal(GSN_ENABLE_COMCONF,  &Qmgr::execENABLE_COMCONF);
-  
+  addRecSignal(GSN_PROCESSINFO_REP, &Qmgr::execPROCESSINFO_REP);
+  addRecSignal(GSN_SYNC_THREAD_VIA_CONF, &Qmgr::execSYNC_THREAD_VIA_CONF);
+
   // Arbitration signals
   addRecSignal(GSN_ARBIT_PREPREQ, &Qmgr::execARBIT_PREPREQ);
   addRecSignal(GSN_ARBIT_PREPCONF, &Qmgr::execARBIT_PREPCONF);
@@ -229,12 +261,19 @@ Qmgr::Qmgr(Block_context& ctx)
   // Message from other blocks requesting node isolation
   addRecSignal(GSN_ISOLATE_ORD, &Qmgr::execISOLATE_ORD);
 
+  addRecSignal(GSN_READ_LOCAL_SYSFILE_CONF,
+               &Qmgr::execREAD_LOCAL_SYSFILE_CONF);
+
+  addRecSignal(GSN_NODE_STATE_REP,
+               &Qmgr::execNODE_STATE_REP, true); // Override
+
   initData();
 }//Qmgr::Qmgr()
 
 Qmgr::~Qmgr() 
 {
   delete []nodeRec;
+  delete []receivedProcessInfo;
 }//Qmgr::~Qmgr()
 
 

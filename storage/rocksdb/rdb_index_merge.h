@@ -17,9 +17,7 @@
 #pragma once
 
 /* MySQL header files */
-#include "handler.h" /* handler */
-#include "log.h"
-#include "my_global.h" /* ulonglong */
+#include "sql/handler.h" /* handler */
 
 /* C++ standard header files */
 #include <queue>
@@ -61,7 +59,7 @@ class Rdb_index_merge {
     /* heap memory allocated for main memory sort/merge  */
     std::unique_ptr<uchar[]> m_block;
     const ulonglong
-        m_block_len;       /* amount of data bytes allocated for block above */
+        m_block_len; /* amount of data bytes allocated for block above */
     ulonglong m_curr_offset; /* offset of the record pointer for the block */
     ulonglong m_disk_start_offset; /* where the chunk starts on disk */
     ulonglong m_disk_curr_offset;  /* current offset on disk */

@@ -1,4 +1,4 @@
-# Copyright (c) 2017, 2018, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2017, 2019, Oracle and/or its affiliates. All rights reserved.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License, version 2.0,
@@ -18,7 +18,7 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program; if not, write to the Free Software
-# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
+# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA
 
 #
 # Configuration for building LDAP SASL Authentication Plugin (client-side)
@@ -37,20 +37,24 @@ MACRO(CROAK_AND_RETURN)
   ENDIF()
 ENDMACRO()
 
+# Several sasl_() functions are deprecated
+IF(APPLE)
+  STRING_APPEND(CMAKE_CXX_FLAGS " -Wno-deprecated-declarations")
+ENDIF()
+
 IF(NOT WIN32)
   IF(DEFINED WITH_SASL)
     MESSAGE(STATUS ${ARGV} "Currently LDAP SASL client authentication plug-in is build with only system installed cyrus SASL library.")
   ENDIF()
 
-  IF(CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
+  IF(FREEBSD)
     INCLUDE_DIRECTORIES(SYSTEM /usr/local/include)
     LIST(APPEND CMAKE_REQUIRED_INCLUDES "/usr/local/include")
   ENDIF()
 
-  CHECK_INCLUDE_FILES(sasl/sasl.h HAVE_SASL_H)
   CHECK_INCLUDE_FILES(lber.h HAVE_LBER_H)
 
-  IF(HAVE_SASL_H)
+  IF(HAVE_SASL_SASL_H)
     SET(CMAKE_EXTRA_INCLUDE_FILES sasl/sasl.h)
   ELSE()
     CROAK_AND_RETURN("Required SASL library is missing.")
@@ -60,6 +64,9 @@ IF(NOT WIN32)
   ELSE()
     CROAK_AND_RETURN("Required LBER library is missing.")
   ENDIF()
+  IF(SASL_LIBRARY_PATH STREQUAL "")
+    SET(SASL_LIBRARY_PATH /usr/lib64/libsasl2.so)
+  ENDIF ()
 ELSE()
   # There is no system installed SASL library on Windows
   SET(WITH_SASL "" CACHE PATH "Location of the SASL install")
@@ -123,8 +130,8 @@ IF(WIN32)
   GET_FILENAME_COMPONENT(SASL_DLL_NAME ${SASL_LIBRARY_DLL} NAME)
   GET_FILENAME_COMPONENT(SASL_SCRAM_PLUGIN_NAME "${SASL_SCRAM_PLUGIN}" NAME)
 
-  # Note that "libsasl.dll" and "saslSCRAM.dll" go into the "bin" directory where
-  # "mysql.exe" and other client executables are located.
+  # Note that "libsasl.dll" and "saslSCRAM.dll" go into the "bin" directory
+  # where "mysql.exe" and other client executables are located.
   INSTALL(FILES "${SASL_LIBRARY_DLL}"
           DESTINATION ${INSTALL_BINDIR}
           COMPONENT SharedLibraries)
@@ -133,14 +140,15 @@ IF(WIN32)
           COMPONENT SharedLibraries)
 
   # To run client executables that load the plug-in from the build tree we need
-  # to copy the SASL library DLL and SASL SCRAM library DLL to the same directory as the client executables.
+  # to copy the SASL library DLL and SASL SCRAM library DLL to the same
+  # directory as the client executables.
   ADD_CUSTOM_COMMAND(TARGET authentication_ldap_sasl_client POST_BUILD
-                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                             "${SASL_LIBRARY_DLL}"
-                             "${CMAKE_BINARY_DIR}/client/${CMAKE_CFG_INTDIR}/${SASL_DLL_NAME}"
-                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                             "${SASL_SCRAM_PLUGIN}"
-                             "${CMAKE_BINARY_DIR}/client/${CMAKE_CFG_INTDIR}/${SASL_SCRAM_PLUGIN_NAME}"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${SASL_LIBRARY_DLL}"
+      "${CMAKE_BINARY_DIR}/client/${CMAKE_CFG_INTDIR}/${SASL_DLL_NAME}"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${SASL_SCRAM_PLUGIN}"
+      "${CMAKE_BINARY_DIR}/client/${CMAKE_CFG_INTDIR}/${SASL_SCRAM_PLUGIN_NAME}"
   )
   ADD_DEPENDENCIES(authentication_ldap_sasl_client mysqltest)
 
