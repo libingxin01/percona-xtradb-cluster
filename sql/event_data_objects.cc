@@ -526,7 +526,7 @@ static bool get_next_time(const Time_zone *time_zone, my_time_t *next,
        We should return an error here so SHOW EVENTS/ SELECT FROM I_S.EVENTS
        would give an error then.
       */
-      return 1;
+      return true;
       break;
     case INTERVAL_LAST:
       DBUG_ASSERT(0);
@@ -1028,6 +1028,12 @@ bool Event_job_data::execute(THD *thd, bool drop) {
   // connection with new command. Run wsrep_open to initialize the open-state
   wsrep_open(thd);
   wsrep_before_command(thd);
+
+  // Setup valid query_id (and wsrep_next_trx_id).
+  // It will be used to setup transaction in case it
+  // needs to be BF aborted in set_system_user_flag(),
+  // before actual event execution is started.
+  thd->set_query_id(next_query_id());
 #endif /* WITH_WSREP */
 
   /*
@@ -1066,7 +1072,8 @@ bool Event_job_data::execute(THD *thd, bool drop) {
   */
   if (save_sctx) set_system_user_flag(thd);
 
-  if (check_access(thd, EVENT_ACL, m_schema_name.str, NULL, NULL, 0, 0)) {
+  if (check_access(thd, EVENT_ACL, m_schema_name.str, NULL, NULL, false,
+                   false)) {
     /*
       This aspect of behavior is defined in the worklog,
       and this is how triggers work too: if TRIGGER
@@ -1078,6 +1085,11 @@ bool Event_job_data::execute(THD *thd, bool drop) {
     goto end;
   }
 
+#ifdef WITH_WSREP
+  if (wsrep_is_bf_aborted(thd)) {
+    goto end;
+  }
+#endif
   if (construct_sp_sql(thd, &sp_sql)) goto end;
 
   /*
@@ -1151,7 +1163,7 @@ end:
       on the slave
     */
     if (construct_drop_event_sql(thd, &sp_sql, m_schema_name, m_event_name))
-      ret = 1;
+      ret = true;
     else {
       ulong saved_master_access;
 
@@ -1222,7 +1234,12 @@ end:
   }
 
 #ifdef WITH_WSREP
-  wsrep_after_command_ignore_result(thd);
+  // Transaction might have been aborted at the stage
+  // when set_system_user_flag() is called.
+  // wsrep_after_command_ignore_result() asserts when there was
+  // any error, so ignore the error explicitly.
+  wsrep_after_command_before_result(thd);
+  wsrep_after_command_after_result(thd);
   wsrep_close(thd);
 #endif /* WITH_WSREP */
 

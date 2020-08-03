@@ -74,6 +74,31 @@ with other nodes.
 This variable is used to specify if the details of the certification failures
 should be logged.
 
+.. variable:: cert.optimistic_pa
+
+Enabled
+   Allows the full range of parallelization as determined by the certification
+   algorithm.
+
+Disabled
+   Limits the parallel applying window so that it does not exceed the parallel
+   applying window seen on the master. In this case, the action starts applying
+   no sooner than all actions on the master are committed.
+
+   :cli: Yes
+   :conf: Yes
+   :scope: Global
+   :dyn: Yes
+   :default: NO
+   
+   .. seealso::
+
+      |galera-cluster| Documentation:
+         - `Parameter: cert.optimistic_pa
+	   <https://galeracluster.com/library/documentation/galera-parameters.html#cert-optimistic-pa>`_
+	 - `Setting parallel slave threads
+	   <https://galeracluster.com/library/kb/parallel-slave-threads.html>`_
+
 .. variable:: debug
 
    :cli: Yes
@@ -341,7 +366,7 @@ allows restarting the node to rejoin by using :term:`IST`.
    Percona Database Performance Blog:
       - `All You Need to Know About GCache (Galera-Cache) <https://www.percona.com/blog/2016/11/16/all-you-need-to-know-about-gcache-galera-cache/>`_
       - `Want IST Not SST for Node Rejoins? We Have a Solution! <https://www.percona.com/blog/2018/02/13/no-sst-node-rejoins/>`_
-   
+
 The :variable:`gcache.freeze_purge_at_seqno` variable takes three values:
 
 -1 (default)
@@ -354,7 +379,7 @@ A valid seqno in gcache
    The freeze purge of write-sets is no less than the smallest seqno currently
    in gcache. Using this value results in freezing the gcache-purge instantly.
    Use this value if selecting a valid seqno in gcache is difficult.
-   
+
 .. variable:: gcache.keep_pages_count
 
    :cli: Yes
@@ -427,8 +452,16 @@ This variable can be used to specify the name of the Galera cache file.
    :dyn: No
    :default: 128M
 
-This variable can be used to specify the size of the page files in the page
-storage.
+Size of the page files in page storage. The limit on overall page storage is the
+size of the disk. Pages are prefixed by gcache.page.
+
+.. seealso::
+
+   |galera-cluster| Documentation: gcache.page_size
+      https://galeracluster.com/library/documentation/galera-parameters.html#gcache-page-size
+   |percona| Database Performance Blog: All You Need to Know About GCache (Galera-Cache)
+      https://www.percona.com/blog/2016/11/16/all-you-need-to-know-about-gcache-galera-cache/
+
 
 .. variable:: gcache.size
 
@@ -442,6 +475,37 @@ Size of the transaction cache for Galera replication. This defines the size of
 the :file:`galera.cache` file which is used as source for |IST|. The bigger the
 value of this variable, the better are chances that the re-joining node will
 get IST instead of |SST|.
+
+.. variable:: gcomm.thread_prio
+
+Using this option, you can raise the priority of the gcomm thread to a higher
+level than it normally uses. 
+
+The format for this option is: <policy>:<priority>. The priority value is an
+integer. The policy value supports the following options:
+
+other
+   Default time-sharing scheduling in Linux. The threads can run
+   until blocked by an I/O request or preempted by higher priorities or
+   superior scheduling designations.
+
+fifo
+   First-in First-out (FIFO) scheduling. These threads always immediately
+   preempt any currently running other, batch or idle threads. They can run
+   until they are either blocked by an I/O request or preempted by a FIFO thread
+   of a higher priority.
+
+rr
+   Round-robin scheduling. These threads always preempt any currently running
+   other, batch or idle threads. The scheduler allows these threads to run for a
+   fixed period of a time. If the thread is still running when this time period is
+   exceeded, they are stopped and moved to the end of the list, allowing another
+   round-robin thread of the same priority to run in their place. They can
+   otherwise continue to run until they are blocked by an I/O request or are
+   preempted by threads of a higher priority.
+
+.. seealso:: `Full definition in Galera Cluster documentation: gcomm.thread_prio
+	     <https://galeracluster.com/library/documentation/galera-parameters.html#gcomm-thread-prio>`_
 
 .. variable:: gcs.fc_debug
 
@@ -468,7 +532,6 @@ the slave queue drops below :variable:`gcs.fc_factor` *
 
 .. variable:: gcs.fc_limit
 
-   :version: :rn:`5.7.17-29.20`: Default value changed from ``16`` to ``100`` 
    :cli: Yes
    :conf: Yes
    :scope: Global
@@ -850,7 +913,7 @@ is limited to 2 gygabytes.
    :conf: Yes
    :scope: Global
    :dyn: No
-   :default: 7
+   :default: 10
 
 This variable is used to specify the highest communication protocol version to
 accept in the cluster. Used only for debugging.
@@ -863,12 +926,18 @@ accept in the cluster. Used only for debugging.
    :dyn: No
    :default: 2
 
-This variable is used to choose the checksum algorithm for network packets. The
-following values are available:
+This variable is used to choose the checksum algorithm for network packets.
+The ``CRC32-C`` option is optimized and may be hardware accelerated on Intel CPUs. The following values are available:
 
  * ``0`` - disable checksum
- * ``1`` - plain ``CRC32`` (used in Galera 2.x)
- * ``2`` - hardware accelerated ``CRC32-C``
+ * ``1`` - ``CRC32``
+ * ``2`` - ``CRC32-C``
+ 
+ The following is an example of the variable use:
+ 
+ .. code-block:: bash
+ 
+     wsrep_provider_options="socket.checksum=2"
 
 .. variable::  socket.ssl
 
@@ -929,3 +998,5 @@ This variable is used to specify if the SSL compression is to be used.
    :default: AES128-SHA
 
 This variable is used to specify what cypher will be used for encryption.
+
+.. include:: .res/replace.txt

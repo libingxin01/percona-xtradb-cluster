@@ -18,12 +18,13 @@
 
 #include <mysql/plugin.h>
 
+#include <vector>
 #include "mysqld.h"
+#include "rpl_gtid.h"
+#include "sql/dd/types/tablespace.h"  // dd::fetch_tablespace_table_refs
 #include "wsrep/provider.hpp"
 #include "wsrep/streaming_context.hpp"
 #include "wsrep_api.h"
-#include "rpl_gtid.h"
-#include <vector>
 #include "wsrep_server_state.h"
 
 #define WSREP_UNDEFINED_TRX_ID ULLONG_MAX
@@ -91,6 +92,7 @@ extern std::atomic<ulong> wsrep_running_threads;
 extern ulong wsrep_certification_rules;
 extern ulong wsrep_RSU_commit_timeout;
 extern bool wsrep_allow_server_session;
+extern uint wsrep_min_log_verbosity;
 
 enum enum_wsrep_reject_types {
   WSREP_REJECT_NONE,    /* nothing rejected */
@@ -147,6 +149,7 @@ enum enum_pxc_maint_modes {
   PXC_MAINT_MODE_MAINTENANCE,
 };
 extern ulong pxc_maint_mode;
+extern bool wsrep_pxc_maint_mode_forced;
 extern ulong pxc_maint_transition_period;
 extern bool pxc_encrypt_cluster_traffic;
 
@@ -172,13 +175,14 @@ extern char *wsrep_cluster_capabilities;
 int wsrep_show_status(THD *thd, SHOW_VAR *var, char *buff);
 int wsrep_show_ready(THD *thd, SHOW_VAR *var, char *buff);
 void wsrep_free_status(THD *thd);
-void wsrep_update_cluster_state_uuid(const char* str);
+void wsrep_update_cluster_state_uuid(const char *str);
 
 /* Filters out --wsrep-new-cluster oprtion from argv[]
  * should be called in the very beginning of main() */
 void wsrep_filter_new_cluster(int *argc, char *argv[]);
 
 int wsrep_init();
+bool wsrep_init_schema(THD *thd);
 void wsrep_deinit();
 void wsrep_recover();
 bool wsrep_before_SE();  // initialize wsrep before storage
@@ -224,10 +228,9 @@ extern void wsrep_shutdown_replication();
 extern bool wsrep_must_sync_wait(THD *thd,
                                  uint mask = WSREP_SYNC_WAIT_BEFORE_READ);
 extern bool wsrep_sync_wait(THD *thd, uint mask = WSREP_SYNC_WAIT_BEFORE_READ);
-extern enum wsrep::provider::status wsrep_sync_wait_upto(THD *thd,
-                                                         wsrep_gtid_t *upto,
-                                                         int timeout);
-extern void wsrep_last_committed_id (wsrep_gtid_t* gtid);
+extern enum wsrep::provider::status wsrep_sync_wait_upto_gtid(
+    THD *thd, wsrep_gtid_t *upto, int timeout);
+extern void wsrep_last_committed_id(wsrep_gtid_t *gtid);
 extern int wsrep_check_opts(int argc, char *const *argv);
 extern void wsrep_prepend_PATH(const char *path);
 /* some inline functions are defined in wsrep_mysqld_inl.h */
@@ -264,6 +267,7 @@ extern wsrep_seqno_t wsrep_locked_seqno;
         .source_line(__LINE__)                                     \
         .source_file(MY_BASENAME)                                  \
         .function(__FUNCTION__)                                    \
+        .int_value("mlv", wsrep_min_log_verbosity)                 \
         .message(fmt, ##__VA_ARGS__);                              \
     if (pxc_force_flush_error_message) flush_error_log_messages(); \
   } while (0);
@@ -272,12 +276,13 @@ extern wsrep_seqno_t wsrep_locked_seqno;
   if (wsrep_debug) WSREP_LOG(INFORMATION_LEVEL, fmt, ##__VA_ARGS__)
 #define WSREP_INFO(fmt, ...) WSREP_LOG(INFORMATION_LEVEL, fmt, ##__VA_ARGS__)
 #define WSREP_WARN(fmt, ...) WSREP_LOG(WARNING_LEVEL, fmt, ##__VA_ARGS__)
+#define WSREP_SYSTEM(fmt, ...) WSREP_LOG(SYSTEM_LEVEL, fmt, ##__VA_ARGS__)
 
-#define WSREP_ERROR(fmt, ...)                             \
-  do {                                                    \
+#define WSREP_ERROR(fmt, ...)                                         \
+  do {                                                                \
     if (!Wsrep_server_state::instance().is_initialized_unprotected()) \
-      pxc_force_flush_error_message = true;               \
-    WSREP_LOG(ERROR_LEVEL, fmt, ##__VA_ARGS__)            \
+      pxc_force_flush_error_message = true;                           \
+    WSREP_LOG(ERROR_LEVEL, fmt, ##__VA_ARGS__)                        \
   } while (0);
 
 #define WSREP_FATAL(fmt, ...)                  \
@@ -299,8 +304,7 @@ extern wsrep_seqno_t wsrep_locked_seqno;
 #define WSREP_LOG_CONFLICT(bf_thd, victim_thd, bf_abort)                      \
   if (wsrep_debug || wsrep_log_conflicts) {                                   \
     WSREP_LOG(INFORMATION_LEVEL, "--------- CONFLICT DETECTED --------");     \
-    WSREP_LOG(INFORMATION_LEVEL,                                              \
-              "cluster conflict due to %s for threads:\n",                    \
+    WSREP_LOG(INFORMATION_LEVEL, "cluster conflict due to %s for threads:\n", \
               (bf_abort) ? "high priority abort" : "certification failure");  \
     if (bf_thd) WSREP_LOG_CONFLICT_THD(bf_thd, "Winning thread");             \
     if (victim_thd) WSREP_LOG_CONFLICT_THD(victim_thd, "Victim thread");      \
@@ -321,6 +325,7 @@ extern wsrep_seqno_t wsrep_locked_seqno;
         .source_line(__LINE__)                                     \
         .source_file(MY_BASENAME)                                  \
         .function(__FUNCTION__)                                    \
+        .int_value("mlv", wsrep_min_log_verbosity)                 \
         .verbatim(s);                                              \
     if (pxc_force_flush_error_message) flush_error_log_messages(); \
   } while (0);
@@ -335,6 +340,7 @@ extern wsrep_seqno_t wsrep_locked_seqno;
         .source_line(__LINE__)                                     \
         .source_file(MY_BASENAME)                                  \
         .function(__FUNCTION__)                                    \
+        .int_value("mlv", wsrep_min_log_verbosity)                 \
         .verbatim(s);                                              \
     if (pxc_force_flush_error_message) flush_error_log_messages(); \
   } while (0);
@@ -355,20 +361,21 @@ extern int wsrep_replaying;
 extern mysql_mutex_t LOCK_wsrep_replaying;
 extern mysql_cond_t COND_wsrep_replaying;
 extern mysql_mutex_t LOCK_wsrep_slave_threads;
-extern mysql_cond_t  COND_wsrep_slave_threads;
+extern mysql_cond_t COND_wsrep_slave_threads;
 extern mysql_mutex_t LOCK_wsrep_cluster_config;
 extern mysql_mutex_t LOCK_wsrep_desync;
 extern mysql_mutex_t LOCK_wsrep_group_commit;
 extern mysql_cond_t COND_wsrep_group_commit;
 extern mysql_mutex_t LOCK_wsrep_SR_pool;
 extern mysql_mutex_t LOCK_wsrep_SR_store;
+extern mysql_mutex_t LOCK_wsrep_alter_tablespace;
 
 extern bool wsrep_emulate_bin_log;
 extern int wsrep_to_isolation;
 extern rpl_sidno wsrep_sidno;
 
 #ifdef HAVE_PSI_INTERFACE
-extern PSI_cond_key  key_COND_wsrep_thd;
+extern PSI_cond_key key_COND_wsrep_thd;
 
 extern PSI_mutex_key key_LOCK_wsrep_ready;
 extern PSI_mutex_key key_COND_wsrep_ready;
@@ -381,7 +388,7 @@ extern PSI_cond_key key_COND_wsrep_sst_thread;
 extern PSI_mutex_key key_LOCK_wsrep_replaying;
 extern PSI_cond_key key_COND_wsrep_replaying;
 extern PSI_mutex_key key_LOCK_wsrep_slave_threads;
-extern PSI_cond_key  key_COND_wsrep_slave_threads;
+extern PSI_cond_key key_COND_wsrep_slave_threads;
 extern PSI_mutex_key key_LOCK_wsrep_cluster_config;
 extern PSI_mutex_key key_LOCK_wsrep_desync;
 extern PSI_mutex_key key_LOCK_wsrep_group_commit;
@@ -389,16 +396,17 @@ extern PSI_cond_key key_COND_wsrep_group_commit;
 extern PSI_mutex_key key_LOCK_wsrep_SR_pool;
 extern PSI_mutex_key key_LOCK_wsrep_SR_store;
 
+extern PSI_mutex_key key_LOCK_wsrep_alter_tablespace;
+
 extern PSI_mutex_key key_LOCK_wsrep_global_seqno;
 extern PSI_mutex_key key_LOCK_wsrep_thd_queue;
-extern PSI_cond_key  key_COND_wsrep_thd_queue;
+extern PSI_cond_key key_COND_wsrep_thd_queue;
 
 extern PSI_mutex_key key_LOCK_wsrep_sst_thread;
 extern PSI_cond_key key_COND_wsrep_sst_thread;
 
 extern PSI_thread_key key_THREAD_wsrep_sst_joiner;
 extern PSI_thread_key key_THREAD_wsrep_sst_donor;
-extern PSI_thread_key key_THREAD_wsrep_sst_upgrade;
 extern PSI_thread_key key_THREAD_wsrep_sst_logger;
 extern PSI_thread_key key_THREAD_wsrep_applier;
 extern PSI_thread_key key_THREAD_wsrep_rollbacker;
@@ -407,11 +415,11 @@ extern PSI_thread_key key_THREAD_wsrep_post_rollbacker;
 extern PSI_file_key key_file_wsrep_gra_log;
 #endif /* HAVE_PSI_INTERFACE */
 
-
 struct TABLE_LIST;
 class Alter_info;
 int wsrep_to_isolation_begin(THD *thd, const char *db_, const char *table_,
                              const TABLE_LIST *table_list,
+                             dd::Tablespace_table_ref_vec *trefs = NULL,
                              Alter_info *alter_info = NULL);
 
 void wsrep_to_isolation_end(THD *thd);
@@ -432,14 +440,13 @@ bool wsrep_node_is_synced();
 bool wsrep_replicate_GTID(THD *thd);
 
 void wsrep_init_SR();
-void wsrep_verify_SE_checkpoint(const wsrep_uuid_t& uuid, wsrep_seqno_t seqno);
-int wsrep_replay_from_SR_store(THD*, const wsrep_trx_meta_t&);
-void wsrep_node_uuid(wsrep_uuid_t&);
+void wsrep_verify_SE_checkpoint(const wsrep_uuid_t &uuid, wsrep_seqno_t seqno);
+int wsrep_replay_from_SR_store(THD *, const wsrep_trx_meta_t &);
+void wsrep_node_uuid(wsrep_uuid_t &);
 
 class Log_event;
-int wsrep_ignored_error_code(Log_event* ev, int error);
-int wsrep_must_ignore_error(THD* thd);
-
+int wsrep_ignored_error_code(Log_event *ev, int error);
+int wsrep_must_ignore_error(THD *thd);
 
 typedef struct wsrep_key_arr {
   wsrep_key_t *keys;
@@ -452,28 +459,22 @@ bool wsrep_prepare_keys_for_isolation(THD *thd, const char *db,
                                       wsrep_key_arr_t *ka);
 void wsrep_keys_free(wsrep_key_arr_t *key_arr);
 
-
-typedef void (*wsrep_thd_processor_fun)(THD*, void *);
-class Wsrep_thd_args
-{
+typedef void (*wsrep_thd_processor_fun)(THD *, void *);
+class Wsrep_thd_args {
  public:
- Wsrep_thd_args(wsrep_thd_processor_fun fun, void* args)
-   :
-  fun_ (fun),
-  args_(args)
-  { }
+  Wsrep_thd_args(wsrep_thd_processor_fun fun, void *args)
+      : fun_(fun), args_(args) {}
 
   wsrep_thd_processor_fun fun() { return fun_; }
 
-  void* args() { return args_; }
+  void *args() { return args_; }
 
  private:
-
-  Wsrep_thd_args(const Wsrep_thd_args&);
-  Wsrep_thd_args& operator=(const Wsrep_thd_args&);
+  Wsrep_thd_args(const Wsrep_thd_args &);
+  Wsrep_thd_args &operator=(const Wsrep_thd_args &);
 
   wsrep_thd_processor_fun fun_;
-  void*                    args_;
+  void *args_;
 };
 
 /**
@@ -514,25 +515,19 @@ enum wsrep::streaming_context::fragment_unit wsrep_fragment_unit(ulong unit);
 constexpr char WSREP_CHANNEL_NAME[] = "wsrep";
 bool wsrep_is_wsrep_channel_name(const char *channel_name);
 
+/* Simple RAII helper */
+class wsrep_scope_guard {
+ public:
+  wsrep_scope_guard(std::function<void()> scope_enter,
+                    std::function<void()> scope_leave)
+      : _scope_leave(scope_leave) {
+    scope_enter();
+  }
 
-/* In 8.0, a WSREP state file was added to keep track of information
-   about WSREP that could be accessed by other processes (e.g. SST)
+  ~wsrep_scope_guard() { _scope_leave(); }
 
-   This file is named 'wsrep_state.dat'
- */
-
-/* Name of the file that holds metadata about the WSREP state.
- */
-constexpr char WSREP_STATE_FILENAME[] = "wsrep_state.dat";
-
-/* Version number for the state file format
- */
-constexpr char WSREP_STATE_FILE_VERSION_NAME[] = "version";
-constexpr char WSREP_STATE_FILE_VERSION[] = "1.0";
-
-/* This identifies the PXC version of the datadir/schema.
- */
-constexpr char WSREP_SCHEMA_VERSION_NAME[] = "wsrep_schema_version";
-constexpr char WSREP_SCHEMA_VERSION[] = MYSQL_SERVER_VERSION;
+ private:
+  std::function<void()> _scope_leave;
+};
 
 #endif /* WSREP_MYSQLD_H */

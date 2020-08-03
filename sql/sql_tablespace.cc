@@ -179,12 +179,12 @@ bool complete_stmt(THD *thd, handlerton *hton, DISABLE_ROLLBACK &&dr,
       return true;
     }
 
-  dr();
-
   /* Commit the statement and call storage engine's post-DDL hook. */
   if (trans_commit_stmt(thd) || trans_commit(thd)) {
     return true;
   }
+
+  dr();
 
   if (hton && ddl_is_atomic(hton) && hton->post_ddl) {
     hton->post_ddl(thd);
@@ -214,7 +214,16 @@ bool lock_rec(THD *thd, MDL_request_list *rlst, const LEX_STRING &tsp) {
                    MDL_INTENTION_EXCLUSIVE, MDL_TRANSACTION);
   rlst->push_front(&backup_lock_request);
 
-  return thd->mdl_context.acquire_locks(rlst, thd->variables.lock_wait_timeout);
+  if (thd->mdl_context.acquire_locks(rlst, thd->variables.lock_wait_timeout))
+    return true;
+
+  /*
+    Now when we have protection against concurrent change of read_only
+    option we can safely re-check its value.
+  */
+  if (check_readonly(thd, true)) return true;
+
+  return false;
 }
 
 template <typename... Names>
@@ -369,7 +378,7 @@ bool intermediate_commit_unless_atomic_ddl(THD *thd, handlerton *hton) {
     return false;
   }
   /* purecov: begin inspected */
-  Disable_gtid_state_update_guard disabler{thd};
+  Implicit_substatement_state_guard substatement_guard{thd};
   return (trans_commit_stmt(thd) || trans_commit(thd));
   /* purecov: end */
 }
@@ -479,7 +488,10 @@ bool Sql_cmd_create_tablespace::execute(THD *thd) {
     encrypt_tablespace = dd::is_encrypted(m_options->encryption);
     encrypt_type = dd::make_string_type(m_options->encryption);
   } else {
-    encrypt_tablespace = thd->variables.default_table_encryption;
+    encrypt_tablespace =
+        thd->variables.default_table_encryption == DEFAULT_TABLE_ENC_ON ||
+        global_system_variables.default_table_encryption ==
+            DEFAULT_TABLE_ENC_ONLINE_TO_KEYRING;
     encrypt_type = encrypt_tablespace ? "Y" : "N";
   }
 
@@ -519,6 +531,8 @@ bool Sql_cmd_create_tablespace::execute(THD *thd) {
   // - Disallow encryption='y', if SE does not support it.
   if (hton->flags & HTON_SUPPORTS_TABLE_ENCRYPTION) {
     tablespace->options().set("encryption", encrypt_type);
+    tablespace->options().set("explicit_encryption",
+                              m_options->encryption.str ? true : false);
   } else if (encrypt_tablespace) {
     my_error(ER_CHECK_NOT_IMPLEMENTED, MYF(0), "ENCRYPTION");
     return true;
@@ -600,7 +614,7 @@ bool Sql_cmd_create_tablespace::execute(THD *thd) {
         return true;
       }
 
-      Disable_gtid_state_update_guard disabler{thd};
+      Implicit_substatement_state_guard substatement_guard{thd};
       (void)trans_commit_stmt(thd);
       (void)trans_commit(thd);
       /* purecov: end */
@@ -704,7 +718,7 @@ bool Sql_cmd_drop_tablespace::execute(THD *thd) {
         return true;
       }
 
-      Disable_gtid_state_update_guard disabler{thd};
+      Implicit_substatement_state_guard substatement_guard{thd};
       (void)trans_commit_stmt(thd);
       (void)trans_commit(thd);
       /* purecov: end */
@@ -905,13 +919,70 @@ bool Sql_cmd_alter_tablespace::execute(THD *thd) {
   }
 
 #ifdef WITH_WSREP
-  if (WSREP(thd) && wsrep_to_isolation_begin(thd, WSREP_MYSQL_DB, NULL, NULL))
-    return true;
+  /* While alter/renaming tablespace, ensure all its sub-objects
+  are part of TOI signature to detect conflict.
+
+  Position of this call is important. TOI call should be made
+  before lock_tablespace_names to avoid entering deadlock.
+  (this is to keep it inline with other alter table flows).
+
+  alter-of-table: toi done -> waiting for mdl lock on tablespace
+  alter-of-tablespace: mdl lock on tablespace -> waiting for toi
+
+  Also, this structure exposes a risk of race.
+  Post discovery of sub-objects if tablespace get new sub-object
+  it can cause said sub-object to get missed.
+  This problem is solved by co-ordination mutex that will block
+  if tablespace alter/rename toi discovery is in progress. */
+
+  // wsrep_alter_tablespace_lock scope begin
+  {
+    wsrep_scope_guard wsrep_alter_tablespace_lock(
+        []() { mysql_mutex_lock(&LOCK_wsrep_alter_tablespace); },
+        []() { mysql_mutex_unlock(&LOCK_wsrep_alter_tablespace); });
+
+    dd::Tablespace_table_ref_vec trefs;
+
+    // mdl_lock scope begin
+    {
+      MDL_request request;
+      MDL_REQUEST_INIT(&request, MDL_key::TABLESPACE, "", m_tablespace_name.str,
+                       MDL_INTENTION_EXCLUSIVE, MDL_EXPLICIT);
+      wsrep_scope_guard mdl_lock(
+          [thd, &request]() {
+            thd->mdl_context.acquire_lock(&request,
+                                          thd->variables.lock_wait_timeout);
+          },
+          [thd, &request]() { thd->mdl_context.release_lock(request.ticket); });
+
+      dd::cache::Dictionary_client *dc = thd->dd_client();
+      dd::cache::Dictionary_client::Auto_releaser releaser(dc);
+
+      auto tsmp = get_mod_pair<dd::Tablespace>(dc, m_tablespace_name.str);
+      if (tsmp.first == nullptr) {
+        my_error(ER_TABLESPACE_MISSING_WITH_NAME, MYF(0),
+                 m_tablespace_name.str);
+        return true;
+      }
+
+      if (dd::fetch_tablespace_table_refs(thd, *tsmp.first, &trefs)) {
+        return true;
+      }
+    }  // mdl_lock scope end
+
+    if (WSREP(thd) &&
+        wsrep_to_isolation_begin(thd, WSREP_MYSQL_DB, NULL, NULL, &trefs)) {
+      return true;
+    }
 #endif /* WITH_WSREP */
 
-  if (lock_tablespace_names(thd, m_tablespace_name)) {
-    return true;
-  }
+    if (lock_tablespace_names(thd, m_tablespace_name)) {
+      return true;
+    }
+
+#ifdef WITH_WSREP
+  }    // wsrep_alter_tablespace_lock scope end
+#endif /* WITH_WSREP */
 
   auto &dc = *thd->dd_client();
   dd::cache::Dictionary_client::Auto_releaser releaser(&dc);
@@ -958,6 +1029,11 @@ bool Sql_cmd_alter_tablespace::execute(THD *thd) {
                                     &table_mdl_reqs))
         return true;
     }
+  }
+
+  if (hton->flags & HTON_SUPPORTS_TABLE_ENCRYPTION) {
+    tsmp.second->options().set("explicit_encryption",
+                               m_options->encryption.str ? true : false);
   }
 
   /*
@@ -1224,17 +1300,75 @@ bool Sql_cmd_alter_tablespace_rename::execute(THD *thd) {
   }
 
 #ifdef WITH_WSREP
-  if (WSREP(thd) && wsrep_to_isolation_begin(thd, WSREP_MYSQL_DB, NULL, NULL))
-    return true;
+  /* While alter/renaming tablespace, ensure all its sub-objects
+  are part of TOI signature to detect conflict.
+
+  Position of this call is important. TOI call should be made
+  before lock_tablespace_names to avoid entering deadlock.
+  (this is to keep it inline with other alter table flows).
+
+  alter-of-table: toi done -> waiting for mdl lock on tablespace
+  alter-of-tablespace: mdl lock on tablespace -> waiting for toi
+
+  Also, this structure exposes a risk of race.
+  Post discovery of sub-objects if tablespace get new sub-object
+  it can cause said sub-object to get missed.
+  This problem is solved by co-ordination mutex that will block
+  if tablespace alter/rename toi discovery is in progress. */
+
+  // The wsrep_alter_tablespace_lock scope
+  {
+    wsrep_scope_guard wsrep_alter_tablespace_lock(
+        []() { mysql_mutex_lock(&LOCK_wsrep_alter_tablespace); },
+        []() { mysql_mutex_unlock(&LOCK_wsrep_alter_tablespace); });
+
+    dd::Tablespace_table_ref_vec trefs;
+
+    // mdl_lock scope begin
+    {
+      MDL_request request;
+      MDL_REQUEST_INIT(&request, MDL_key::TABLESPACE, "", m_tablespace_name.str,
+                       MDL_INTENTION_EXCLUSIVE, MDL_EXPLICIT);
+      wsrep_scope_guard mdl_lock(
+          [thd, &request]() {
+            thd->mdl_context.acquire_lock(&request,
+                                          thd->variables.lock_wait_timeout);
+          },
+          [thd, &request]() { thd->mdl_context.release_lock(request.ticket); });
+
+      dd::cache::Dictionary_client *dc = thd->dd_client();
+      dd::cache::Dictionary_client::Auto_releaser releaser(dc);
+
+      auto tsmp = get_mod_pair<dd::Tablespace>(dc, m_tablespace_name.str);
+      if (tsmp.first == nullptr) {
+        my_error(ER_TABLESPACE_MISSING_WITH_NAME, MYF(0),
+                 m_tablespace_name.str);
+        return true;
+      }
+
+      if (dd::fetch_tablespace_table_refs(thd, *tsmp.first, &trefs)) {
+        return true;
+      }
+    }  // mdl_lock scope end
+
+    if (WSREP(thd) &&
+        wsrep_to_isolation_begin(thd, WSREP_MYSQL_DB, NULL, NULL, &trefs)) {
+      return true;
+    }
 #endif /* WITH_WSREP */
 
-  // Can't check the name in SE, yet. Need to acquire Tablespace
-  // object first, so that we can get the engine name.
+    // Can't check the name in SE, yet. Need to acquire Tablespace
+    // object first, so that we can get the engine name.
 
-  // Lock both tablespace names in one go
-  if (lock_tablespace_names(thd, m_tablespace_name, m_new_name)) {
-    return true;
-  }
+    // Lock both tablespace names in one go
+    if (lock_tablespace_names(thd, m_tablespace_name, m_new_name)) {
+      return true;
+    }
+
+#ifdef WITH_WSREP
+  }    // wsrep_alter_tablespace_lock end
+#endif /* WITH_WSREP */
+
   dd::cache::Dictionary_client *dc = thd->dd_client();
   dd::cache::Dictionary_client::Auto_releaser releaser(dc);
 
@@ -1316,9 +1450,9 @@ bool Sql_cmd_alter_tablespace_rename::execute(THD *thd) {
 
   // TODO WL#9536: Until crash-safe ddl is implemented we need to do
   // manual compensation in case of rollback
-  auto compensate_grd = dd::sdi_utils::make_guard(hton, [&](handlerton *hton) {
+  auto compensate_grd = dd::sdi_utils::make_guard(hton, [&](handlerton *ht) {
     std::unique_ptr<dd::Tablespace> comp{tsmp.first->clone()};
-    (void)hton->alter_tablespace(hton, thd, &ts_info, tsmp.second, comp.get());
+    (void)ht->alter_tablespace(ht, thd, &ts_info, tsmp.second, comp.get());
   });
 
   DBUG_EXECUTE_IF("tspr_post_se", {
@@ -1381,7 +1515,6 @@ bool Sql_cmd_create_undo_tablespace::execute(THD *thd) {
   if (WSREP(thd) && wsrep_to_isolation_begin(thd, WSREP_MYSQL_DB, NULL, NULL))
     return true;
 #endif /* WITH_WSREP */
-
 
   handlerton *hton = nullptr;
   if (get_stmt_hton(thd, m_options->engine_name, m_undo_tablespace_name.str,
@@ -1480,7 +1613,7 @@ bool Sql_cmd_create_undo_tablespace::execute(THD *thd) {
         return true;
       }
 
-      Disable_gtid_state_update_guard disabler{thd};
+      Implicit_substatement_state_guard substatement_guard{thd};
       (void)trans_commit_stmt(thd);
       (void)trans_commit(thd);
     }
@@ -1583,7 +1716,7 @@ bool Sql_cmd_alter_undo_tablespace::execute(THD *thd) {
       hton->alter_tablespace(hton, thd, &ts_info, tsmp.first, tsmp.second);
   if (map_errors(ha_error, "ALTER UNDO TABLEPSPACE", &ts_info)) {
     if (!ddl_is_atomic(hton)) {
-      Disable_gtid_state_update_guard disabler{thd};
+      Implicit_substatement_state_guard substatement_guard{thd};
       (void)trans_commit_stmt(thd);
       (void)trans_commit(thd);
     }
@@ -1688,7 +1821,7 @@ bool Sql_cmd_drop_undo_tablespace::execute(THD *thd) {
         return true;
       }
 
-      Disable_gtid_state_update_guard disabler{thd};
+      Implicit_substatement_state_guard substatement_guard{thd};
       (void)trans_commit_stmt(thd);
       (void)trans_commit(thd);
     }

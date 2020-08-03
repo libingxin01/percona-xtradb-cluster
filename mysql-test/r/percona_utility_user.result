@@ -130,7 +130,7 @@ ERROR HY000: Operation SHOW CREATE USER failed for 'frank'@'localhost'
 # restart
 SHOW GLOBAL STATUS LIKE "Connections";
 Variable_name	Value
-Connections	8
+Connections	10
 SHOW GLOBAL STATUS LIKE "Threads%";
 Variable_name	Value
 Threads_cached	0
@@ -139,7 +139,7 @@ Threads_created	1
 Threads_running	2
 SHOW GLOBAL STATUS LIKE "Connections";
 Variable_name	Value
-Connections	9
+Connections	11
 SHOW GLOBAL STATUS LIKE "Threads%";
 Variable_name	Value
 Threads_cached	0
@@ -163,4 +163,9 @@ PROCESSLIST_ID	ATTR_NAME	ATTR_VALUE	ORDINAL_POSITION
 SELECT COUNT(DISTINCT PROCESSLIST_ID) FROM performance_schema.session_connect_attrs;
 COUNT(DISTINCT PROCESSLIST_ID)
 1
+SELECT COUNT(*) from performance_schema.threads where type='FOREGROUND';
+COUNT(*)
+3
+KILL 9;
+ERROR HY000: You are not owner of thread 9
 REVOKE PROXY ON 'frank'@'%' FROM 'root'@'localhost';

@@ -470,6 +470,81 @@ static void create_upgrade_file() {
 
 }  // namespace
 
+#ifdef WITH_WSREP
+
+bool pxc_fix_mysql_tables(THD *thd) {
+  const LEX_CSTRING section_start{STRING_WITH_LEN("#! PXC_SECTION::START")};
+  const LEX_CSTRING section_end{STRING_WITH_LEN("#! PXC_SECTION::END")};
+
+  const char **query_ptr;
+  bool in_pxc_section = false;
+
+  if (ignore_error_and_execute(thd, "USE mysql")) {
+    WSREP_ERROR(
+        "Could not run PXC upgrade. Could not change database to 'mysql'");
+    return true;
+  }
+
+  for (query_ptr = &mysql_fix_privilege_tables[0]; *query_ptr != NULL;
+       query_ptr++) {
+    if (!strncmp(*query_ptr, section_start.str, section_start.length)) {
+      in_pxc_section = true;
+    } else if (!strncmp(*query_ptr, section_end.str, section_end.length)) {
+      in_pxc_section = false;
+    }
+
+    if (in_pxc_section) {
+      if (ignore_error_and_execute(thd, *query_ptr)) return true;
+    }
+  }
+  return false;
+}
+
+bool upgrade_pxc_only(THD *thd) {
+  /*
+     PXC upgrade requires modifications to some InnoDB tables.
+     When the server is started without innodb, or without a read-write innodb,
+     missing this user is a non-issue, since we won't participate in SST anyway.
+     */
+  handlerton *ddse = ha_resolve_by_legacy_type(thd, DB_TYPE_INNODB);
+  if (ddse->is_dict_readonly && ddse->is_dict_readonly()) {
+    LogErr(WARNING_LEVEL, ER_DD_NO_WRITES_NO_REPOPULATION, "InnoDB", " ");
+    return false;
+  }
+
+  if (opt_initialize || !dd::upgrade::no_server_upgrade_required()) {
+    // These SQL statements assume an initialized/upgraded server, will fail
+    // wit older versions. Not an issue, skip them.
+    return false;
+  }
+
+  Disable_autocommit_guard autocommit_guard(thd);
+  Bootstrap_error_handler bootstrap_error_handler;
+
+  Server_option_guard<bool> acl_guard(&opt_noacl, true);
+  Server_option_guard<bool> general_log_guard(&opt_general_log, false);
+  Server_option_guard<bool> slow_log_guard(&opt_slow_log, false);
+  Server_option_guard<bool> bin_log_guard(&thd->variables.sql_log_bin, false);
+
+  log_sink_buffer_check_timeout();
+
+  bootstrap_error_handler.set_log_error(false);
+
+  const bool err = pxc_fix_mysql_tables(thd);
+
+  bootstrap_error_handler.set_log_error(true);
+
+  if (!err) {
+    WSREP_SYSTEM("PXC upgrade completed successfully");
+  }
+
+  log_sink_buffer_check_timeout();
+
+  return dd::end_transaction(thd, err);
+}
+
+#endif /* WITH_WSREP */
+
 /*
   This function runs checks on the database before running the upgrade to make
   sure that the database is ready to be upgraded to a newer version. New checks
@@ -482,51 +557,6 @@ bool do_server_upgrade_checks(THD *thd) {
 
   dd::cache::Dictionary_client::Auto_releaser releaser(thd->dd_client());
   Upgrade_error_counter error_count;
-
-  /*
-    If we upgrade from server version 8.0.14, 8.0.15 or 8.0.16, then we
-    must reject upgrade if all of the below hold:
-    - We are running with l_c_t_n == 1.
-    - We are running on a case sensitive file system.
-    - We have partitioned tables in our system.
-    - The user does not submit 'upgrade=FORCE' on the command line.
-  */
-  if (dd::bootstrap::DD_bootstrap_ctx::instance().upgraded_server_version_is(
-          bootstrap::SERVER_VERSION_80014) ||
-      dd::bootstrap::DD_bootstrap_ctx::instance().upgraded_server_version_is(
-          bootstrap::SERVER_VERSION_80015) ||
-      dd::bootstrap::DD_bootstrap_ctx::instance().upgraded_server_version_is(
-          bootstrap::SERVER_VERSION_80016)) {
-    if (lower_case_table_names == 1 && lower_case_file_system == 0 &&
-        opt_upgrade_mode != UPGRADE_FORCE) {
-      /*
-        We could do SELECT COUNT(*), but then we would need to analyze the
-        result set. With the query below, we can determine whether there
-        are partitioned tables just by comparing the end markers of the
-        result set iterator.
-      */
-      dd::String_type query = "SELECT id FROM mysql.table_partitions";
-      LEX_STRING str;
-      lex_string_strmake(thd->mem_root, &str, query.c_str(), query.size());
-      Ed_connection con(thd);
-      if (con.execute_direct(str)) {
-        LogErr(ERROR_LEVEL, ER_DD_INITIALIZE_SQL_ERROR, query.c_str(),
-               con.get_last_errno(), con.get_last_error());
-        return dd::end_transaction(thd, true);
-      }
-      List<Ed_row> &rows = *con.get_result_sets();
-      /*
-        If rows are found, then there are partitioned tables, and we reject
-        upgrade.
-      */
-      if (rows.begin() != rows.end()) {
-        LogErr(ERROR_LEVEL, ER_UPGRADE_WITH_PARTITIONED_TABLES_REJECTED,
-               dd::bootstrap::DD_bootstrap_ctx::instance()
-                   .get_upgraded_server_version());
-        return dd::end_transaction(thd, true);
-      }
-    }
-  }
 
   /*
     For any server upgrade, we will analyze events, routines, views and
@@ -682,6 +712,41 @@ bool do_server_upgrade_checks(THD *thd) {
                    table->name().c_str(), name.c_str());
           }
         }
+      }
+    }
+  }
+
+  if (!error_count.has_too_many_errors()) {
+    /*
+      Get hold of the InnoDB handlerton. The check for partitioned tables
+      using shared tablespaces is only relevant for InnoDB.
+    */
+    plugin_ref pr =
+        ha_resolve_by_name_raw(thd, LEX_CSTRING{STRING_WITH_LEN("InnoDB")});
+    handlerton *hton =
+        (pr != nullptr ? plugin_data<handlerton *>(pr) : nullptr);
+    DBUG_ASSERT(hton != nullptr && hton->is_tablespace_keyring_v1_encrypted);
+
+    /*
+      Get hold of all tablespaces, keep the non-implicit InnoDB spaces
+      in a map.
+    */
+    std::vector<const dd::Tablespace *> tablespaces;
+    if (thd->dd_client()->fetch_global_components(&tablespaces))
+      return dd::end_transaction(thd, true);
+
+    for (const dd::Tablespace *space : tablespaces) {
+      if (my_strcasecmp(system_charset_info, space->engine().c_str(),
+                        "InnoDB") != 0)
+        continue;
+
+      int error = 0;
+      bool is_tablespace_keyring_v1_encrypted =
+          hton->is_tablespace_keyring_v1_encrypted(*space, error);
+      DBUG_ASSERT(error == 0);
+      if (is_tablespace_keyring_v1_encrypted) {
+        LogErr(ERROR_LEVEL, ER_UPGRADE_KEYRING_V1_ENCRYPTION);
+        return dd::end_transaction(thd, true);
       }
     }
   }
@@ -875,6 +940,12 @@ bool upgrade_system_schemas(THD *thd) {
 bool no_server_upgrade_required() {
   return !(dd::bootstrap::DD_bootstrap_ctx::instance().is_server_upgrade() ||
            opt_upgrade_mode == UPGRADE_FORCE);
+}
+
+bool I_S_upgrade_required() {
+  return dd::bootstrap::DD_bootstrap_ctx::instance().is_server_upgrade() ||
+         dd::bootstrap::DD_bootstrap_ctx::instance().I_S_upgrade_done() ||
+         opt_upgrade_mode == UPGRADE_FORCE;
 }
 
 }  // namespace upgrade

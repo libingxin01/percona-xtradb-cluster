@@ -72,8 +72,9 @@ Alter_info::Alter_info(const Alter_info &rhs, MEM_ROOT *mem_root)
       alter_index_visibility_list(mem_root,
                                   rhs.alter_index_visibility_list.begin(),
                                   rhs.alter_index_visibility_list.end()),
-      alter_state_list(mem_root, rhs.alter_state_list.begin(),
-                       rhs.alter_state_list.end()),
+      alter_constraint_enforcement_list(
+          mem_root, rhs.alter_constraint_enforcement_list.begin(),
+          rhs.alter_constraint_enforcement_list.end()),
       check_constraint_spec_list(mem_root,
                                  rhs.check_constraint_spec_list.begin(),
                                  rhs.check_constraint_spec_list.end()),
@@ -292,11 +293,11 @@ bool Sql_cmd_alter_table::execute(THD *thd) {
   DBUG_ASSERT(!(alter_info.flags & Alter_info::ALTER_ADMIN_PARTITION));
   if (check_access(thd, priv_needed, first_table->db,
                    &first_table->grant.privilege,
-                   &first_table->grant.m_internal, 0, 0) ||
+                   &first_table->grant.m_internal, false, false) ||
       check_access(thd, INSERT_ACL | CREATE_ACL, alter_info.new_db_name.str,
                    &priv,
                    NULL, /* Don't use first_tab->grant with sel_lex->db */
-                   0, 0))
+                   false, false))
     return true; /* purecov: inspected */
 
   /* If it is a merge table, check privileges for merge children. */
@@ -370,6 +371,23 @@ bool Sql_cmd_alter_table::execute(THD *thd) {
   thd->set_slow_log_for_admin_command();
 
 #ifdef WITH_WSREP
+  /* Check if foreign keys are accessible.
+  1. Transaction is replicated first, then is done locally.
+  2. Replicated node applies write sets in context
+  of root user.
+  Above two conditions may cause that even if we have no access to FKs,
+  transactions will replicate with success, but fail locally.
+
+  Here we check only for FK access, not if the engine supports FKs.
+  That's enough, because right now we need only to know if transaction
+  should be rolled back because of lack of access and not replicated,
+  or we can replicate it and let replicated node do the rest of the job. */
+  if (alter_info.flags & Alter_info::ADD_FOREIGN_KEY) {
+    if (check_fk_parent_table_access(thd, &create_info, &alter_info, false)) {
+      return true;
+    }
+  }
+
   /* PXC doesn't recommend/allow ALTER operation on table created using
   non-transactional storage engine (like MyISAM, HEAP/MEMORY, etc....)
   except ALTER operation to change storage engine to transactional storage
@@ -384,41 +402,43 @@ bool Sql_cmd_alter_table::execute(THD *thd) {
 
     TABLE_LIST* table = first_table;
 
-    // Acquire lock on the table as it is needed to get the instance from DD
-    MDL_request mdl_request;
-    MDL_REQUEST_INIT(&mdl_request, MDL_key::TABLE, table->db, table->table_name,
-                     MDL_SHARED, MDL_EXPLICIT);
-    thd->mdl_context.acquire_lock(&mdl_request,
-                                  thd->variables.lock_wait_timeout);
-
+    // mdl_lock scope begin
     {
+      // Acquire lock on the table as it is needed to get the instance from DD
+      MDL_request mdl_request;
+      MDL_REQUEST_INIT(&mdl_request, MDL_key::TABLE, table->db,
+                       table->table_name, MDL_SHARED, MDL_EXPLICIT);
+      wsrep_scope_guard mdl_lock(
+          [thd, &mdl_request]() {
+            thd->mdl_context.acquire_lock(&mdl_request,
+                                          thd->variables.lock_wait_timeout);
+          },
+          [thd, &mdl_request]() {
+            thd->mdl_context.release_lock(mdl_request.ticket);
+          });
+
       const char *schema_name = table->db;
       const char *table_name = table->table_name;
       dd::cache::Dictionary_client::Auto_releaser releaser(thd->dd_client());
       const dd::Table *table_ref = NULL;
 
       if (thd->dd_client()->acquire(schema_name, table_name, &table_ref)) {
-        thd->mdl_context.release_lock(mdl_request.ticket);
         return true;
       }
 
       if (table_ref == nullptr ||
           table_ref->hidden() == dd::Abstract_table::HT_HIDDEN_SE) {
         my_error(ER_NO_SUCH_TABLE, MYF(0), schema_name, table_name);
-        thd->mdl_context.release_lock(mdl_request.ticket);
         return true;
       }
 
       handlerton *hton = nullptr;
       if (dd::table_storage_engine(thd, table_ref, &hton)) {
-        thd->mdl_context.release_lock(mdl_request.ticket);
         return true;
       }
 
       existing_db_type = hton->db_type;
-    }
-
-    thd->mdl_context.release_lock(mdl_request.ticket);
+    }  // mdl_lock scope end
 
     bool is_system_db =
         (first_table && ((strcmp(first_table->db, "mysql") == 0) ||
@@ -549,6 +569,13 @@ bool Sql_cmd_alter_table::execute(THD *thd) {
     }
   }
 
+  /* This could be looked upon as too restrictive given it is taking
+  a global mutex but anyway being TOI if there is alter tablespace
+  operation active in parallel TOI would streamline it. */
+  if (create_info.tablespace) {
+    mysql_mutex_lock(&LOCK_wsrep_alter_tablespace);
+  }
+
   {
     extern TABLE *find_temporary_table(THD * thd, const TABLE_LIST *tl);
 
@@ -558,11 +585,18 @@ bool Sql_cmd_alter_table::execute(THD *thd) {
           wsrep_to_isolation_begin(
               thd, ((thd->lex->name.str) ? thd->lex->select_lex->db : NULL),
               ((thd->lex->name.str) ? thd->lex->name.str : NULL), first_table,
-              &alter_info)) {
+              NULL, &alter_info)) {
         WSREP_WARN("ALTER TABLE isolation failure");
+        if (create_info.tablespace) {
+          mysql_mutex_unlock(&LOCK_wsrep_alter_tablespace);
+        }
         return true;
       }
     }
+  }
+
+  if (create_info.tablespace) {
+    mysql_mutex_unlock(&LOCK_wsrep_alter_tablespace);
   }
 #endif /* WITH_WSREP */
 
@@ -663,7 +697,7 @@ bool Sql_cmd_discard_import_tablespace::execute(THD *thd) {
 #endif /* WITH_WSREP */
 
   if (check_access(thd, ALTER_ACL, table_list->db, &table_list->grant.privilege,
-                   &table_list->grant.m_internal, 0, 0))
+                   &table_list->grant.m_internal, false, false))
     return true;
 
   if (check_grant(thd, ALTER_ACL, table_list, false, UINT_MAX, false))
@@ -710,7 +744,7 @@ bool Sql_cmd_secondary_load_unload::execute(THD *thd) {
   TABLE_LIST *table_list = thd->lex->select_lex->get_table_list();
 
   if (check_access(thd, ALTER_ACL, table_list->db, &table_list->grant.privilege,
-                   &table_list->grant.m_internal, 0, 0))
+                   &table_list->grant.m_internal, false, false))
     return true;
 
   if (check_grant(thd, ALTER_ACL, table_list, false, UINT_MAX, false))

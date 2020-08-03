@@ -171,7 +171,7 @@ static bool update_buffer_size(THD *, KEY_CACHE *key_cache,
         Move tables using this key cache to the default key cache
         and clear the old key cache.
       */
-      key_cache->in_init = 1;
+      key_cache->in_init = true;
       mysql_mutex_unlock(&LOCK_global_system_variables);
       key_cache->param_buff_size = 0;
       ha_resize_key_cache(key_cache);
@@ -181,7 +181,7 @@ static bool update_buffer_size(THD *, KEY_CACHE *key_cache,
         the key cache code with a pointer to the deleted (empty) key cache
       */
       mysql_mutex_lock(&LOCK_global_system_variables);
-      key_cache->in_init = 0;
+      key_cache->in_init = false;
     }
     return error;
   }
@@ -189,7 +189,7 @@ static bool update_buffer_size(THD *, KEY_CACHE *key_cache,
   key_cache->param_buff_size = new_value;
 
   /* If key cache didn't exist initialize it, else resize it */
-  key_cache->in_init = 1;
+  key_cache->in_init = true;
   mysql_mutex_unlock(&LOCK_global_system_variables);
 
   if (!key_cache->key_cache_inited)
@@ -198,7 +198,7 @@ static bool update_buffer_size(THD *, KEY_CACHE *key_cache,
     error = ha_resize_key_cache(key_cache);
 
   mysql_mutex_lock(&LOCK_global_system_variables);
-  key_cache->in_init = 0;
+  key_cache->in_init = false;
 
   return error;
 }
@@ -210,12 +210,12 @@ static bool update_keycache_param(THD *, KEY_CACHE *key_cache, ptrdiff_t offset,
 
   keycache_var(key_cache, offset) = new_value;
 
-  key_cache->in_init = 1;
+  key_cache->in_init = true;
   mysql_mutex_unlock(&LOCK_global_system_variables);
   error = ha_resize_key_cache(key_cache);
 
   mysql_mutex_lock(&LOCK_global_system_variables);
-  key_cache->in_init = 0;
+  key_cache->in_init = false;
 
   return error;
 }
@@ -891,8 +891,8 @@ static Sys_var_ulong Sys_auto_increment_increment(
     "Auto-increment columns are incremented by this",
     HINT_UPDATEABLE SESSION_VAR(auto_increment_increment), CMD_LINE(OPT_ARG),
 #ifdef WITH_WSREP
-    VALID_RANGE(1, 65535), DEFAULT(1), BLOCK_SIZE(1), NO_MUTEX_GUARD,
-    IN_BINLOG, NULL, ON_UPDATE(update_auto_increment_increment));
+    VALID_RANGE(1, 65535), DEFAULT(1), BLOCK_SIZE(1), NO_MUTEX_GUARD, IN_BINLOG,
+    NULL, ON_UPDATE(update_auto_increment_increment));
 #else
     VALID_RANGE(1, 65535), DEFAULT(1), BLOCK_SIZE(1), NO_MUTEX_GUARD,
     IN_BINLOG);
@@ -904,8 +904,8 @@ static Sys_var_ulong Sys_auto_increment_offset(
     "auto-increment-increment != 1",
     HINT_UPDATEABLE SESSION_VAR(auto_increment_offset), CMD_LINE(OPT_ARG),
 #ifdef WITH_WSREP
-    VALID_RANGE(1, 65535), DEFAULT(1), BLOCK_SIZE(1), NO_MUTEX_GUARD,
-    IN_BINLOG, NULL, ON_UPDATE(update_auto_increment_offset));
+    VALID_RANGE(1, 65535), DEFAULT(1), BLOCK_SIZE(1), NO_MUTEX_GUARD, IN_BINLOG,
+    NULL, ON_UPDATE(update_auto_increment_offset));
 #else
     VALID_RANGE(1, 65535), DEFAULT(1), BLOCK_SIZE(1), NO_MUTEX_GUARD,
     IN_BINLOG);
@@ -1228,8 +1228,8 @@ static bool binlog_format_check(sys_var *self, THD *thd, set_var *var) {
        var->save_result.ulonglong_value == BINLOG_FORMAT_MIXED);
 
   if (WSREP(thd) && stmt_or_mixed &&
-      (var->type == OPT_GLOBAL || var->type == OPT_SESSION))
-  {
+      (var->type == OPT_GLOBAL || var->type == OPT_SESSION ||
+       var->type == OPT_PERSIST)) {
     /* Setting binlog format to MIXED/STATEMENT is not allowed. */
     WSREP_ERROR(
         "Percona-XtraDB-Cluster prohibits setting"
@@ -1655,7 +1655,7 @@ static Sys_var_bool Sys_binlog_order_commits(
     NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(binlog_order_commits_check),
     ON_UPDATE(0));
 #else
-    GLOBAL_VAR(opt_binlog_order_commits), CMD_LINE(OPT_ARG), DEFAULT(TRUE));
+    GLOBAL_VAR(opt_binlog_order_commits), CMD_LINE(OPT_ARG), DEFAULT(true));
 #endif /* WITH_WSREP */
 
 static Sys_var_ulong Sys_bulk_insert_buff_size(
@@ -1968,13 +1968,13 @@ static Sys_var_dbug Sys_dbug("debug", "Debug log", sys_var::SESSION,
 export bool fix_delay_key_write(sys_var *, THD *, enum_var_type) {
   switch (delay_key_write_options) {
     case DELAY_KEY_WRITE_NONE:
-      myisam_delay_key_write = 0;
+      myisam_delay_key_write = false;
       break;
     case DELAY_KEY_WRITE_ON:
-      myisam_delay_key_write = 1;
+      myisam_delay_key_write = true;
       break;
     case DELAY_KEY_WRITE_ALL:
-      myisam_delay_key_write = 1;
+      myisam_delay_key_write = true;
       ha_open_options |= HA_OPEN_DELAY_KEY_WRITE;
       break;
   }
@@ -3420,7 +3420,7 @@ static bool fix_read_only(sys_var *self, THD *thd, enum_var_type) {
   bool result = true;
 #ifdef WITH_WSREP
   bool own_lock = false;
-#endif /* WITH_WSREP */
+#endif                             /* WITH_WSREP */
   bool new_read_only = read_only;  // make a copy before releasing a mutex
   DBUG_TRACE;
 
@@ -3500,7 +3500,7 @@ static bool fix_super_read_only(sys_var *, THD *thd, enum_var_type type) {
   DBUG_TRACE;
 
 #ifdef WITH_WSREP
-  bool own_lock= false;
+  bool own_lock = false;
 #endif /* WITH_WSREP */
 
   /* return if no changes: */
@@ -3779,7 +3779,7 @@ static Sys_var_charptr Sys_secure_file_priv(
 static bool fix_server_id(sys_var *, THD *thd, enum_var_type) {
   // server_id is 'MYSQL_PLUGIN_IMPORT ulong'
   // So we cast here, rather than change its type.
-  server_id_supplied = 1;
+  server_id_supplied = true;
   thd->server_id = static_cast<uint32>(server_id);
   return false;
 }
@@ -4045,7 +4045,7 @@ bool Sys_var_enum_binlog_checksum::global_update(THD *thd, set_var *var) {
 
   if (check_purge) mysql_bin_log.purge();
 
-  return 0;
+  return false;
 }
 
 bool Sys_var_gtid_next::session_update(THD *thd, set_var *var) {
@@ -6054,6 +6054,13 @@ static Sys_var_bool Sys_general_log(
     NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(0),
     ON_UPDATE(fix_general_log_state));
 
+static Sys_var_bool Sys_log_raw(
+    "log_raw",
+    "Log to general log before any rewriting of the query. For use in "
+    "debugging, not production as sensitive information may be logged.",
+    GLOBAL_VAR(opt_general_log_raw), CMD_LINE(OPT_ARG), DEFAULT(false),
+    NO_MUTEX_GUARD, NOT_IN_BINLOG);
+
 static bool fix_slow_log_state(sys_var *, THD *thd, enum_var_type) {
   bool new_state = opt_slow_log, res = false;
 
@@ -7350,6 +7357,16 @@ static bool check_set_default_table_encryption_access(
   // the value is unchanged.
   longlong previous_val = thd->variables.default_table_encryption;
   longlong val = (longlong)var->save_result.ulonglong_value;
+
+#ifdef WITH_WSREP
+  if (val > 1) {
+    my_message(ER_WRONG_VALUE_FOR_VAR,
+               "Keyring encryption is not supported in Percona XtraDB Cluster.",
+               MYF(0));
+    return true;
+  }
+#endif
+
   if ((!var->is_global_persist() && val == previous_val) ||
       thd->security_context()->check_access(SUPER_ACL) ||
       (thd->security_context()
@@ -7367,11 +7384,7 @@ static bool check_set_default_table_encryption_access(
 }
 
 static const char *default_table_encryption_type_names[] = {
-    "OFF",
-    "ON",
-    "KEYRING_ON",
-    "ONLINE_TO_KEYRING",
-    "ONLINE_FROM_KEYRING_TO_UNENCRYPTED",
+    "OFF", "ON", "ONLINE_TO_KEYRING", "ONLINE_FROM_KEYRING_TO_UNENCRYPTED",
     nullptr};
 
 bool Sys_var_enum_default_table_encryption::global_update(THD *, set_var *var) {
@@ -7500,9 +7513,8 @@ static Sys_var_charptr Sys_wsrep_data_home_dir(
 static Sys_var_charptr Sys_wsrep_cluster_name(
     "wsrep_cluster_name", "Name for the cluster",
     READ_ONLY GLOBAL_VAR(wsrep_cluster_name), CMD_LINE(REQUIRED_ARG),
-    IN_FS_CHARSET, DEFAULT(WSREP_CLUSTER_NAME), NO_MUTEX_GUARD,
-    NOT_IN_BINLOG, ON_CHECK(wsrep_cluster_name_check),
-    ON_UPDATE(wsrep_cluster_name_update));
+    IN_FS_CHARSET, DEFAULT(WSREP_CLUSTER_NAME), NO_MUTEX_GUARD, NOT_IN_BINLOG,
+    ON_CHECK(wsrep_cluster_name_check), ON_UPDATE(wsrep_cluster_name_update));
 
 static Sys_var_charptr Sys_wsrep_cluster_address(
     "wsrep_cluster_address", "Address to initially connect to cluster",
@@ -7743,10 +7755,9 @@ static Sys_var_bool Sys_wsrep_replicate_myisam(
     ON_UPDATE(0));
 
 static Sys_var_bool Sys_wsrep_log_conflicts("wsrep_log_conflicts",
-                                              "To log multi-master conflicts",
-                                              GLOBAL_VAR(wsrep_log_conflicts),
-                                              CMD_LINE(OPT_ARG),
-                                              DEFAULT(false));
+                                            "To log multi-master conflicts",
+                                            GLOBAL_VAR(wsrep_log_conflicts),
+                                            CMD_LINE(OPT_ARG), DEFAULT(false));
 
 static Sys_var_bool Sys_wsrep_load_data_splitting(
     "wsrep_load_data_splitting",
@@ -7756,11 +7767,11 @@ static Sys_var_bool Sys_wsrep_load_data_splitting(
     NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(0), ON_UPDATE(0),
     DEPRECATED_VAR(""));
 
-static Sys_var_bool Sys_wsrep_slave_FK_checks(
-    "wsrep_slave_FK_checks",
-    "Should slave thread do "
-    "foreign key constraint checks",
-    GLOBAL_VAR(wsrep_slave_FK_checks), CMD_LINE(OPT_ARG), DEFAULT(true));
+static Sys_var_bool Sys_wsrep_slave_FK_checks("wsrep_slave_FK_checks",
+                                              "Should slave thread do "
+                                              "foreign key constraint checks",
+                                              GLOBAL_VAR(wsrep_slave_FK_checks),
+                                              CMD_LINE(OPT_ARG), DEFAULT(true));
 
 static Sys_var_bool Sys_wsrep_slave_UK_checks(
     "wsrep_slave_UK_checks",
@@ -7804,11 +7815,19 @@ static Sys_var_bool Sys_wsrep_dirty_reads(
     SESSION_VAR(wsrep_dirty_reads), CMD_LINE(OPT_ARG), DEFAULT(false),
     NO_MUTEX_GUARD, NOT_IN_BINLOG);
 
-static Sys_var_uint Sys_wsrep_ignore_apply_errors (
-       "wsrep_ignore_apply_errors", "Ignore replication errors",
-       GLOBAL_VAR(wsrep_ignore_apply_errors), CMD_LINE(REQUIRED_ARG),
-       VALID_RANGE(WSREP_IGNORE_ERRORS_NONE, WSREP_IGNORE_ERRORS_MAX),
-       DEFAULT(7), BLOCK_SIZE(1));
+static Sys_var_uint Sys_wsrep_ignore_apply_errors(
+    "wsrep_ignore_apply_errors", "Ignore replication errors",
+    GLOBAL_VAR(wsrep_ignore_apply_errors), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(WSREP_IGNORE_ERRORS_NONE, WSREP_IGNORE_ERRORS_MAX),
+    DEFAULT(WSREP_IGNORE_ERRORS_NONE), BLOCK_SIZE(1));
+
+static Sys_var_uint Sys_wsrep_min_log_verbosity(
+    "wsrep_min_log_verbosity",
+    "Set the minimum logging verbosity "
+    "level of wsrep plugin and Galera",
+    GLOBAL_VAR(wsrep_min_log_verbosity), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(1, 3), DEFAULT(3), BLOCK_SIZE(1), NO_MUTEX_GUARD,
+    NOT_IN_BINLOG);
 
 static const char *pxc_strict_modes[] = {"DISABLED", "PERMISSIVE", "ENFORCING",
                                          "MASTER", NullS};
@@ -7839,3 +7858,41 @@ static Sys_var_bool Sys_pxc_encrypt_cluster_traffic(
     DEFAULT(true), NO_MUTEX_GUARD, NOT_IN_BINLOG);
 
 #endif /* WITH_WSREP */
+
+static bool check_set_require_row_format(sys_var *, THD *thd, set_var *var) {
+  /*
+   Should own SUPER or SYSTEM_VARIABLES_ADMIN or SESSION_VARIABLES_ADMIN
+   when the value is changing to NO, no privileges are needed to set to YES
+  */
+  longlong previous_val = thd->variables.require_row_format;
+  longlong val = (longlong)var->save_result.ulonglong_value;
+  DBUG_ASSERT(!var->is_global_persist());
+
+  // if it was true and we are changing it
+  if (previous_val && val != previous_val) {
+    if (thd->security_context()->check_access(SUPER_ACL) ||
+        thd->security_context()
+            ->has_global_grant(STRING_WITH_LEN("SYSTEM_VARIABLES_ADMIN"))
+            .first ||
+        thd->security_context()
+            ->has_global_grant(STRING_WITH_LEN("SESSION_VARIABLES_ADMIN"))
+            .first)
+      return false;
+
+    my_error(ER_SPECIFIC_ACCESS_DENIED_ERROR, MYF(0),
+             "SUPER or SYSTEM_VARIABLES_ADMIN or SESSION_VARIABLES_ADMIN");
+    return true;
+  }
+  return false;
+}
+
+/**
+   Session only flag to limit the application of queries to row based events
+   and DDLs with the exception of temporary table creation/deletion
+*/
+static Sys_var_bool Sys_var_require_row_format(
+    "require_row_format",
+    "Limit the application of queries to row based events "
+    "and DDLs with the exception of temporary table creation/deletion.",
+    SESSION_ONLY(require_row_format), NO_CMD_LINE, DEFAULT(false),
+    NO_MUTEX_GUARD, NOT_IN_BINLOG, ON_CHECK(check_set_require_row_format));

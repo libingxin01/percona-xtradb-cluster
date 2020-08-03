@@ -113,8 +113,8 @@
 #include "thr_lock.h"
 #ifdef WITH_WSREP
 #include "mysql/components/services/log_builtins.h"
-#include "wsrep_mysqld.h"
 #include "sql/log.h"
+#include "wsrep_mysqld.h"
 #include "wsrep_trans_observer.h"
 #endif /* WITH_WSREP */
 
@@ -773,6 +773,12 @@ bool lock_schema_name(THD *thd, const char *db) {
                                      thd->variables.lock_wait_timeout))
     return true;
 
+  /*
+    Now when we have protection against concurrent change of read_only
+    option we can safely re-check its value.
+  */
+  if (check_readonly(thd, true)) return true;
+
   DEBUG_SYNC(thd, "after_wait_locked_schema_name");
   return false;
 }
@@ -894,6 +900,12 @@ bool lock_object_name(THD *thd, MDL_key::enum_mdl_namespace mdl_type,
                                      thd->variables.lock_wait_timeout))
     return true;
 
+  /*
+    Now when we have protection against concurrent change of read_only
+    option we can safely re-check its value.
+  */
+  if (check_readonly(thd, true)) return true;
+
   DEBUG_SYNC(thd, "after_wait_locked_pname");
   return false;
 }
@@ -1001,7 +1013,16 @@ bool acquire_shared_global_read_lock(THD *thd,
   MDL_REQUEST_INIT(&grl_request, MDL_key::GLOBAL, "", "",
                    MDL_INTENTION_EXCLUSIVE, MDL_TRANSACTION);
 
-  return thd->mdl_context.acquire_lock(&grl_request, lock_wait_timeout);
+  if (thd->mdl_context.acquire_lock(&grl_request, lock_wait_timeout))
+    return true;
+
+  /*
+    Now when we have protection against concurrent change of read_only
+    option we can safely re-check its value.
+  */
+  if (check_readonly(thd, true)) return true;
+
+  return false;
 }
 
 /**
@@ -1052,7 +1073,7 @@ bool Global_read_lock::lock_global_read_lock(THD *thd) {
     if (thd->mdl_context.acquire_lock(&mdl_request,
                                       thd->variables.lock_wait_timeout)) {
       Global_read_lock::m_atomic_active_requests--;
-      return 1;
+      return true;
     }
 
     m_mdl_global_shared_lock = mdl_request.ticket;
@@ -1069,7 +1090,7 @@ bool Global_read_lock::lock_global_read_lock(THD *thd) {
     forbid it before, or we can have a 3-thread deadlock if 2 do SELECT FOR
     UPDATE and one does FLUSH TABLES WITH READ LOCK).
   */
-  return 0;
+  return false;
 }
 
 /**
@@ -1096,15 +1117,16 @@ void Global_read_lock::unlock_global_read_lock(THD *thd) {
 
     /* If node not part of the cluster avoid running the resume/pause action */
     if (server_state.state() != Wsrep_server_state::s_disconnected) {
-      if (server_state.state() == Wsrep_server_state::s_donor ||
-          (wsrep_on(thd) &&
-           server_state.state() != Wsrep_server_state::s_synced)) {
+      /*
+       Resume wsrep server even if current thread has disabled replication.
+       We allow other nodes to replicate data to this server.
+       */
+      if (server_state.state() != Wsrep_server_state::s_synced) {
         /* TODO: maybe redundant here?: */
         wsrep_locked_seqno = WSREP_SEQNO_UNDEFINED;
         server_state.resume();
         pause_provider(false);
-      } else if (wsrep_on(thd) &&
-                 server_state.state() == Wsrep_server_state::s_synced) {
+      } else {
         server_state.resume_and_resync();
         pause_provider(false);
       }
@@ -1149,7 +1171,7 @@ bool Global_read_lock::make_global_read_lock_block_commit(THD *thd) {
   }
 #endif /* WITH_WSREP */
 
-  if (m_state != GRL_ACQUIRED) return 0;
+  if (m_state != GRL_ACQUIRED) return false;
 
 #ifdef WITH_WSREP
   /* Take an explict lock that is not wsrep-preemptable. */
@@ -1178,15 +1200,15 @@ bool Global_read_lock::make_global_read_lock_block_commit(THD *thd) {
   /* If node has left the cluster no point in pausing and resuming it. */
   if (server_state.state() != Wsrep_server_state::s_disconnected) {
     wsrep::seqno paused_seqno;
-    if (server_state.state() == Wsrep_server_state::s_donor ||
-        (wsrep_on(thd) &&
-         server_state.state() != Wsrep_server_state::s_synced)) {
+
+    /*
+     Pause wsrep server even if current thread has disabled replication.
+     We don't want another nodes to replicate data to this server.
+     */
+    if (server_state.state() != Wsrep_server_state::s_synced) {
       paused_seqno = server_state.pause();
-    } else if (wsrep_on(thd) &&
-               server_state.state() == Wsrep_server_state::s_synced) {
-      paused_seqno = server_state.desync_and_pause();
     } else {
-      return false;
+      paused_seqno = server_state.desync_and_pause();
     }
     WSREP_INFO("Server paused at: %lld", paused_seqno.get());
     if (paused_seqno.get() >= 0) {

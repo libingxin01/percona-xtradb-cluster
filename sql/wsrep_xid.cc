@@ -17,13 +17,14 @@
 //! @file some utility functions and classes not directly related to replication
 
 #include "wsrep_xid.h"
+#include "debug_sync.h"
+#include "mysql/components/services/log_builtins.h"
 #include "mysql/plugin.h"  // MYSQL_STORAGE_ENGINE_PLUGIN
+#include "service_wsrep.h"
+#include "sql/log.h"
 #include "sql_class.h"
 #include "sql_plugin.h"
 #include "wsrep_mysqld.h"  // for logging macros
-#include "mysql/components/services/log_builtins.h"
-#include "sql/log.h"
-#include "service_wsrep.h"
 
 extern bool srv_sys_tablespaces_open;
 
@@ -60,12 +61,12 @@ const unsigned char *wsrep_xid_uuid(const xid_t *xid) {
     return static_cast<const unsigned char *>(wsrep::id::undefined().data());
 }
 
-const wsrep::id& wsrep_xid_uuid(const XID &xid) {
+const wsrep::id &wsrep_xid_uuid(const XID &xid) {
   DBUG_ASSERT(sizeof(wsrep::id) == sizeof(wsrep_uuid_t));
   return *reinterpret_cast<const wsrep::id *>(wsrep_xid_uuid(&xid));
 }
 
-long long wsrep_xid_seqno(const XID* xid) {
+long long wsrep_xid_seqno(const XID *xid) {
   long long ret = wsrep::seqno::undefined().get();
   if (wsrep_is_wsrep_xid(xid)) {
     memcpy(&ret, xid->get_data() + WSREP_XID_SEQNO_OFFSET, sizeof(ret));
@@ -77,12 +78,12 @@ wsrep::seqno wsrep_xid_seqno(const XID &xid) {
   return wsrep::seqno(wsrep_xid_seqno(&xid));
 }
 
-static bool set_SE_checkpoint(THD* , plugin_ref plugin, void *arg) {
+static bool set_SE_checkpoint(THD *, plugin_ref plugin, void *arg) {
   XID *xid = static_cast<XID *>(arg);
   handlerton *hton = plugin_data<handlerton *>(plugin);
 
   if (hton->db_type == DB_TYPE_INNODB) {
-    const unsigned char* uuid = wsrep_xid_uuid(xid);
+    const unsigned char *uuid = wsrep_xid_uuid(xid);
     char uuid_str[40] = {
         0,
     };
@@ -100,7 +101,7 @@ bool wsrep_set_SE_checkpoint(XID &xid) {
                         &xid);
 }
 
-bool wsrep_set_SE_checkpoint(const wsrep::gtid& wsgtid) {
+bool wsrep_set_SE_checkpoint(const wsrep::gtid &wsgtid) {
   if (!WSREP_ON || wsrep_unireg_abort) return true;
 
   if (!srv_sys_tablespaces_open) {
@@ -110,8 +111,9 @@ bool wsrep_set_SE_checkpoint(const wsrep::gtid& wsgtid) {
     On shutdown galera will try to update wsrep co-ordinates to sys_header
     that is located in innodb tablespace (ibdata1) and will fail. */
 
-    WSREP_ERROR("Failed to execute wsrep_set_SE_checkpoint."
-                " System tablespace not open");
+    WSREP_ERROR(
+        "Failed to execute wsrep_set_SE_checkpoint."
+        " System tablespace not open");
     return true;
   }
 
@@ -134,6 +136,10 @@ static bool get_SE_checkpoint(THD *, plugin_ref plugin, void *arg) {
     wsrep_uuid_print(&uuid, uuid_str, sizeof(uuid_str));
     WSREP_DEBUG("Read WSREPXid (InnoDB): %s:%lld", uuid_str,
                 (long long)wsrep_xid_seqno(xid));
+    DBUG_EXECUTE_IF("stop_after_reading_xid", {
+      const char action[] = "now SIGNAL read_xid WAIT_FOR go_ahead";
+      DBUG_ASSERT(!debug_sync_set_action(current_thd, STRING_WITH_LEN(action)));
+    };);
   }
 
   return false;
@@ -161,7 +167,7 @@ wsrep::gtid wsrep_get_SE_checkpoint() {
   }
 
   XID xid;
-  memset(static_cast<void*>(&xid), 0, sizeof(xid));
+  memset(static_cast<void *>(&xid), 0, sizeof(xid));
   xid.set_format_id(-1);
 
   if (wsrep_get_SE_checkpoint(xid)) {
@@ -175,7 +181,7 @@ wsrep::gtid wsrep_get_SE_checkpoint() {
   if (!wsrep_is_wsrep_xid(&xid)) {
     WSREP_WARN("Read non-wsrep XID from storage engines.");
     return wsrep::gtid();
-}
+  }
 
   return wsrep::gtid(wsrep_xid_uuid(xid), wsrep_xid_seqno(xid));
 }

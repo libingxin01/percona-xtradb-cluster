@@ -1471,7 +1471,14 @@ void Mysqld_socket_listener::close_listener() {
     being listened is not included in the m_socket_map. Instead, this socket
     referenced by the data member m_admin_interface_listen_socket.
   */
-  if (m_use_separate_thread_for_admin) {
+
+  /*
+    See the logic in setup_listener()
+    Thread was spawned only if both --admin-address is specified
+    and --create-admin-listener-thread=ON
+   */
+  if (!m_admin_bind_address.address.empty() &&
+      m_use_separate_thread_for_admin) {
 #ifdef _WIN32
     /*
       For Windows, first close the socket referenced by the data member
@@ -1482,7 +1489,7 @@ void Mysqld_socket_listener::close_listener() {
     my_thread_join(&admin_socket_thread_id, nullptr);
 #else
     // First, finish listening thread.
-    pthread_kill(admin_socket_thread_id.thread, SIGUSR1);
+    pthread_kill(admin_socket_thread_id.thread, SIGALRM);
     my_thread_join(&admin_socket_thread_id, nullptr);
     /*
       After a thread listening on admin interface finished, it is safe

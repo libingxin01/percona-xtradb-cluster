@@ -1013,9 +1013,7 @@ static bool check_and_create_compression_dict_tables(THD *thd) {
   // Create the compression dictionary tables
   if (compression_dict::bootstrap(thd)) return true;
 
-  if (dd::info_schema::create_non_dd_views(thd, false)) {
-    return true;
-  }
+  dd::info_schema::create_system_views(thd, true, true);
 
   /*
     We must commit the transaction before executing a new query, which
@@ -1052,8 +1050,11 @@ bool restart(THD *thd) {
                         d->get_actual_dd_version(thd)) ||
       upgrade::do_server_upgrade_checks(thd) || upgrade::upgrade_tables(thd) ||
       check_and_create_compression_dict_tables(thd) ||
-      repopulate_charsets_and_collations(thd) || verify_contents(thd) ||
-      update_versions(thd, false)) {
+      repopulate_charsets_and_collations(thd) ||
+#ifdef WITH_WSREP
+      wsrep_init_schema(thd) || dd::upgrade::upgrade_pxc_only(thd) ||
+#endif /* WITH_WSREP */
+      verify_contents(thd) || update_versions(thd, false)) {
     return true;
   }
 
@@ -1112,6 +1113,9 @@ bool setup_dd_objects_and_collations(THD *thd) {
     upgrade does not need to be considered.
   */
   if (sync_meta_data(thd) || repopulate_charsets_and_collations(thd) ||
+#ifdef WITH_WSREP
+      wsrep_init_schema(thd) || dd::upgrade::upgrade_pxc_only(thd) ||
+#endif /* WITH_WSREP */
       verify_contents(thd) || update_versions(thd, false)) {
     return true;
   }

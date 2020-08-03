@@ -74,7 +74,7 @@ Prefix: %{_sysconfdir}
 
 #Placeholder should be replaced on preparation stage
 %if %{undefined galera_version}
- %define galera_version 3.33 
+ %define galera_version 4.3 
 %endif
 
 %if %{undefined galera_revision}
@@ -103,9 +103,9 @@ Prefix: %{_sysconfdir}
 
 %define release_tag     %{nil}
 %if %{undefined dist}
-    %define release         %{release_tag}%{wsrep_version}.%{rpm_version}.%{distribution}
+    %define release         %{release_tag}%{rpm_version}.%{distribution}
 %else
-    %define release         %{release_tag}%{wsrep_version}.%{rpm_version}.%{dist}
+    %define release         %{release_tag}%{rpm_version}.%{dist}
 %endif
 
 #
@@ -144,7 +144,7 @@ Prefix: %{_sysconfdir}
 %if %{undefined src_base}
   %define src_base Percona-XtraDB-Cluster
 %endif
-%define src_dir %{src_base}-%{mysql_version}-%{wsrep_version}
+%define src_dir %{src_base}-%{mysql_version}
 
 %if %{undefined feature_set}
   %define feature_set community
@@ -157,7 +157,7 @@ Prefix: %{_sysconfdir}
     %define compilation_comment_release     Percona XtraDB Cluster (GPL), Release rel%{percona_server_version}, Revision %{revision}, WSREP version %{wsrep_version}
 %endif
 
-%define server_suffix -80
+#%define server_suffix -80
 
 %if 0%{?rhel} > 6
     %define distro_req           chkconfig nmap
@@ -354,7 +354,10 @@ Group:          Applications/Databases
 Requires:       %{distro_requires}
 Requires:             percona-xtradb-cluster-client = %{version}-%{release}
 Requires:             percona-xtradb-cluster-shared = %{version}-%{release}
-Requires:             socat rsync iproute perl-DBI perl-DBD-MySQL lsof
+%if 0%{?compatlib}
+Requires:             percona-xtradb-cluster-shared-compat = %{version}-%{release}
+%endif
+Requires:             socat iproute perl-DBI perl-DBD-MySQL
 Requires:       perl(Data::Dumper) which qpress
 %if 0%{?systemd}
 Requires(post):   systemd
@@ -469,6 +472,7 @@ Summary:        Percona XtraDB Cluster - Shared libraries
 Group:          Applications/Databases
 Provides:       mysql-shared >= %{mysql_version} mysql-libs >= %{mysql_version}
 Conflicts:      Percona-Server-shared-56
+Conflicts:      Percona-Server-shared-57
 %if "%rhel" > "6"
 #Provides:       mariadb-libs >= 5.5.37
 Obsoletes:      mariadb-libs >= 5.5.37
@@ -500,9 +504,11 @@ Provides:       MySQL-shared-compat%{?_isa} = %{version}-%{release}
 Provides:       libmysqlclient.so.18()(64bit)
 Provides:       libmysqlclient.so.18(libmysqlclient_16)(64bit)
 Provides:       libmysqlclient.so.18(libmysqlclient_18)(64bit)
-Obsoletes:      mariadb-libs
+Obsoletes:      mariadb-libs Percona-XtraDB-Cluster-shared-compat-57
 Conflicts:      Percona-XtraDB-Cluster-shared-55
 Conflicts:      Percona-XtraDB-Cluster-shared-56
+Conflicts:      Percona-XtraDB-Cluster-shared-57
+Conflicts:      Percona-XtraDB-Cluster-shared-compat-57
 %endif
 
 %description -n percona-xtradb-cluster-shared-compat
@@ -606,10 +612,13 @@ mkdir pxc_extra
 pushd pxc_extra
 mkdir pxb-2.4
 pushd pxb-2.4
-yumdownloader percona-xtrabackup-24
+yumdownloader percona-xtrabackup-24-2.4.20
 rpm2cpio *.rpm | cpio --extract --make-directories --verbose
 mv usr/bin ./
 mv usr/lib* ./
+mv lib64 lib
+mv lib/xtrabackup/* lib/ || true
+rm -rf lib/xtrabackup
 rm -rf usr
 rm -f *.rpm
 popd
@@ -617,12 +626,16 @@ popd
 
 mkdir pxb-8.0
 pushd pxb-8.0
-yumdownloader percona-xtrabackup-80
+yumdownloader percona-xtrabackup-80-8.0.12
 rpm2cpio *.rpm | cpio --extract --make-directories --verbose
 mv usr/bin ./
-mv usr/lib* ./
+mv usr/lib64 ./
+mv lib64 lib
+mv lib/xtrabackup/* lib/
+rm -rf lib/xtrabackup
 rm -rf usr
 rm -f *.rpm
+
 popd
 popd
 
@@ -672,8 +685,9 @@ mkdir debug
            -DWITH_PAM=1 \
            -DWITH_INNODB_MEMCACHED=1 \
            -DWITH_ZLIB=system \
+           -DWITH_ZSTD=bundled \
            -DWITH_SCALABILITY_METRICS=ON \
-           -DMYSQL_SERVER_SUFFIX="%{server_suffix}" \
+           -DMYSQL_SERVER_SUFFIX="" \
            %{?mecab_option} \
            -DWITH_PAM=ON  %{TOKUDB_FLAGS} %{TOKUDB_DEBUG_ON} %{ROCKSDB_FLAGS}
   echo BEGIN_DEBUG_CONFIG ; egrep '^#define' include/config.h ; echo END_DEBUG_CONFIG
@@ -710,9 +724,10 @@ mkdir release
            -DWITH_PAM=1 \
            -DWITH_INNODB_MEMCACHED=1 \
            -DWITH_ZLIB=system \
+           -DWITH_ZSTD=bundled \
            -DWITH_SCALABILITY_METRICS=ON \
            %{?mecab_option} \
-           -DMYSQL_SERVER_SUFFIX="%{server_suffix}" \
+           -DMYSQL_SERVER_SUFFIX="" \
            -DWITH_PAM=ON  %{TOKUDB_FLAGS} %{TOKUDB_DEBUG_OFF} %{ROCKSDB_FLAGS}
   echo BEGIN_NORMAL_CONFIG ; egrep '^#define' include/config.h ; echo END_NORMAL_CONFIG
   make %{?_smp_mflags}
@@ -841,7 +856,6 @@ ln -s %{_sysconfdir}/init.d/mysql $RBR%{_sbindir}/rcmysql
 %endif
 
 install -d $RBR%{_bindir}
-ln -s wsrep_sst_rsync $RBR%{_bindir}/wsrep_sst_rsync_wan
 
 %if %{WITH_TCMALLOC}
 install -m 644 "%{malloc_lib_source}" \
@@ -905,12 +919,12 @@ install -d $RBR%{_mandir}/man8
 install -m 644 $MBD/%{galera_src_dir}/man/garbd.8  \
     $RBR%{_mandir}/man8/garbd.8
 install -d $RBR%{_libdir}/mysql
-%if 0%{?mecab}
-    mv $RBR%{_libdir}/mecab $RBR%{_libdir}/mysql
-%endif
+#%if 0%{?mecab}
+#    mv $RBR%{_libdir}/mecab $RBR%{_libdir}/mysql
+#%endif
 # remove some unwanted router files
-rm -rf %{buildroot}/%{_libdir}/libmysqlharness.{a,so}
-rm -rf %{buildroot}/%{_libdir}/libmysqlrouter.so
+rm -rf %{buildroot}/%{_libdir}/mysql/libmysqlharness.{a,so}
+rm -rf %{buildroot}/%{_libdir}/mysql/libmysqlrouter.so
 
 ##############################################################################
 #  Post processing actions, i.e. when installed
@@ -1083,7 +1097,7 @@ if [ X${PERCONA_DEBUG} == X1 ]; then
         set -x
 fi
 if [ ! -e /var/log/mysqld.log ]; then
-    /usr/bin/install -o %{mysqld_user} -g %{mysqld_group} /dev/null /var/log/mysqld.log
+    /usr/bin/install -m0640 -o %{mysqld_user} -g %{mysqld_group} /dev/null /var/log/mysqld.log
 fi
 %if 0%{?systemd}
   %systemd_post mysql
@@ -1237,7 +1251,7 @@ echo "Run the following commands to create these functions:"
 echo "mysql -e \"CREATE FUNCTION fnv1a_64 RETURNS INTEGER SONAME 'libfnv1a_udf.so'\""
 echo "mysql -e \"CREATE FUNCTION fnv_64 RETURNS INTEGER SONAME 'libfnv_udf.so'\""
 echo "mysql -e \"CREATE FUNCTION murmur_hash RETURNS INTEGER SONAME 'libmurmur_udf.so'\""
-echo "See  http://www.percona.com/doc/percona-server/5.7/management/udf_percona_toolkit.html for more details"
+echo "See  http://www.percona.com/doc/percona-server/8.0/management/udf_percona_toolkit.html for more details"
 
 #echo "Thank you for installing the MySQL Community Server! For Production
 #systems, we recommend MySQL Enterprise, which contains enterprise-ready
@@ -1378,6 +1392,11 @@ fi
 ##############################################################################
 #  Files section
 ##############################################################################
+# Empty section for metapackage
+%files
+
+# Empty section for metapackage
+%files -n percona-xtradb-cluster-full
 
 %files -n percona-xtradb-cluster-server
 %defattr(-,root,root,0755)
@@ -1406,6 +1425,7 @@ fi
 %doc %attr(644, root, man) %{_mandir}/man1/mysql.server.1*
 %doc %attr(644, root, man) %{_mandir}/man1/mysql_tzinfo_to_sql.1*
 %doc %attr(644, root, man) %{_mandir}/man1/perror.1*
+%doc %attr(644, root, man) %{_mandir}/man1/comp_err.1*
 #%doc %attr(644, root, man) %{_mandir}/man1/resolve_stack_dump.1*
 #%doc %attr(644, root, man) %{_mandir}/man1/resolveip.1*
 %doc %attr(644, root, man) %{_mandir}/man8/mysqld.8*
@@ -1418,6 +1438,7 @@ fi
 %attr(755, root, root) %{_bindir}/pyclustercheck
 %attr(755, root, root) %{_bindir}/innochecksum
 %attr(755, root, root) %{_bindir}/ibd2sdi
+%attr(755, root, root) %{_bindir}/comp_err
 %attr(755, root, root) %{_bindir}/my_print_defaults
 %attr(755, root, root) %{_bindir}/myisam_ftdump
 %attr(755, root, root) %{_bindir}/myisamchk
@@ -1435,16 +1456,17 @@ fi
 #%attr(755, root, root) %{_bindir}/resolveip
 %attr(755, root, root) %{_bindir}/wsrep_sst_common
 %attr(755, root, root) %{_bindir}/wsrep_sst_xtrabackup-v2
-%attr(755, root, root) %{_bindir}/wsrep_sst_rsync
-%attr(755, root, root) %{_bindir}/wsrep_sst_upgrade
+#%attr(755, root, root) %{_bindir}/wsrep_sst_upgrade
 %attr(755, root, root) %{_bindir}/ps_mysqld_helper
 # Explicit %attr() mode not applicaple to symlink
-%{_bindir}/wsrep_sst_rsync_wan
 %attr(755, root, root) %{_bindir}/lz4_decompress
 %attr(755, root, root) %{_bindir}/mysql_ssl_rsa_setup
 
 %attr(755, root, root) %{_sbindir}/mysqld
 %attr(755, root, root) %{_sbindir}/mysqld-debug
+%dir %{_libdir}/mysql/private
+%attr(755, root, root) %{_libdir}/mysql/private/libprotobuf-lite.so.3.6.1
+%attr(755, root, root) %{_libdir}/mysql/private/libprotobuf.so.3.6.1
 %if 0%{?systemd} == 0
 %attr(755, root, root) %{_sbindir}/rcmysql
 %endif
@@ -1525,7 +1547,6 @@ fi
 # ----------------------------------------------------------------------------
 %files -n percona-xtradb-cluster-devel
 %defattr(-, root, root, 0755)
-%doc %attr(644, root, man) %{_mandir}/man1/comp_err.1*
 %doc %attr(644, root, man) %{_mandir}/man1/mysql_config.1*
 %attr(755, root, root) %{_bindir}/mysql_config
 %dir %attr(755, root, root) %{_includedir}/mysql
@@ -1533,15 +1554,15 @@ fi
 %{_includedir}/mysql/*
 %{_datadir}/aclocal/mysql.m4
 %{_libdir}/pkgconfig/*
-%{_libdir}/libperconaserverclient*.a
-%{_libdir}/libmysqlservices.a
+%{_libdir}/mysql/libperconaserverclient*.a
+%{_libdir}/mysql/libmysqlservices.a
 
 # ----------------------------------------------------------------------------
 %files -n percona-xtradb-cluster-shared
 %defattr(-, root, root, 0755)
 %{_sysconfdir}/ld.so.conf.d/percona-xtradb-cluster-shared-%{version}-%{_arch}.conf
 # Shared libraries (omit for architectures that don't support them)
-%{_libdir}/libperconaserver*.so*
+%{_libdir}/mysql/libperconaserver*.so*
 
 # ----------------------------------------------------------------------------
 %files -n percona-xtradb-cluster-garbd
@@ -1612,7 +1633,8 @@ done
 
 %if 0%{?systemd}
 if [ $1 -eq 0 ];then
-    %systemd_postun
+    echo "Postinstall actions for mysql.service"
+    %systemd_postun mysql.service
 else
     serv=$(/usr/bin/systemctl list-units | grep 'mysql@.*.service' | grep 'active running' | head -1 | awk '{ print $1 }')
     numint=0
@@ -1668,6 +1690,7 @@ fi
 %dir %{_sysconfdir}/mysqlrouter
 %config(noreplace) %{_sysconfdir}/mysqlrouter/mysqlrouter.conf
 %{_bindir}/mysqlrouter
+%{_bindir}/mysqlrouter_keyring
 %{_bindir}/mysqlrouter_plugin_info
 %{_bindir}/mysqlrouter_passwd
 %doc %attr(644, root, man) %{_mandir}/man1/mysqlrouter.1*
@@ -1679,11 +1702,11 @@ fi
 %else
 %{_sysconfdir}/init.d/mysqlrouter
 %endif
-%{_libdir}/libmysqlharness.so.*
-%{_libdir}/libmysqlrouter.so.*
-%{_libdir}/libmysqlrouter_http.so*
-%dir %{_libdir}/mysqlrouter
-%{_libdir}/mysqlrouter/*.so
+%{_libdir}/mysql/libmysqlharness.so.*
+%{_libdir}/mysql/libmysqlrouter.so.*
+%{_libdir}/mysql/libmysqlrouter_http.so*
+%dir %{_libdir}/mysql/mysqlrouter
+%{_libdir}/mysql/mysqlrouter/*.so*
 %dir %attr(755, mysqlrouter, mysqlrouter) /var/log/mysqlrouter
 %dir %attr(755, mysqlrouter, mysqlrouter) /var/run/mysqlrouter
 

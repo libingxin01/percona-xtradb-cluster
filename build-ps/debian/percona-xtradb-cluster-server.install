@@ -1,4 +1,10 @@
 usr/lib/mysql/plugin/*.so
+usr/bin/comp_err
+usr/bin/mysql_ssl_rsa_setup
+usr/bin/lz4_decompress
+usr/bin/ps_mysqld_helper
+usr/bin/mysql_upgrade
+usr/bin/ibd2sdi
 usr/bin/clustercheck
 usr/bin/pyclustercheck
 usr/bin/innochecksum
@@ -16,14 +22,17 @@ usr/bin/perror
 usr/bin/pxc_extra
 usr/bin/wsrep_sst_common
 usr/bin/wsrep_sst_xtrabackup-v2
-usr/bin/wsrep_sst_rsync
-usr/bin/wsrep_sst_upgrade
+# usr/bin/wsrep_sst_rsync
+#usr/bin/wsrep_sst_upgrade
 usr/sbin/mysqld
 usr/bin/mysql-systemd
 # configuration files
 debian/extra/mysql.cnf  etc/mysql/
 debian/extra/mysqld.cnf /etc/mysql/mysql.conf.d/
 debian/extra/mysql.bootstrap etc/default/
+usr/share/man/man1/ibd2sdi.1
+usr/share/man/man1/lz4_decompress.1
+usr/share/man/man1/mysql_ssl_rsa_setup.1
 usr/share/man/man1/myisamchk.1
 usr/share/man/man1/myisamlog.1
 usr/share/man/man1/myisampack.1
@@ -45,3 +54,6 @@ etc/default/mysql
 libgalera_smm.so usr/lib/galera4
 lib/systemd/system/mysql.service
 lib/systemd/system/mysql@.service
+#private shared libs
+usr/lib/mysql/private/libprotobuf-lite.so.3.6.1
+usr/lib/mysql/private/libprotobuf.so.3.6.1

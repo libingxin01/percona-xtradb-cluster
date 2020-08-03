@@ -60,14 +60,14 @@ extern MYSQL_PLUGIN_IMPORT CHARSET_INFO *system_charset_info;
 static PSI_memory_key key_memory_MDL_context_acquire_locks;
 
 #ifdef WITH_WSREP
-#include "mysql/components/services/log_builtins.h"
 #include "debug_sync.h"
+#include "mysql/components/services/log_builtins.h"
+#include "sql/log.h"
 #include "wsrep_mysqld.h"
 #include "wsrep_thd.h"
-#include "sql/log.h"
 
-extern bool wsrep_handle_mdl_conflict(
-    const MDL_context *requestor_ctx, MDL_ticket *ticket, const MDL_key *key);
+extern bool wsrep_handle_mdl_conflict(const MDL_context *requestor_ctx,
+                                      MDL_ticket *ticket, const MDL_key *key);
 #endif /* WITH_WSREP */
 
 #ifdef HAVE_PSI_INTERFACE
@@ -135,6 +135,7 @@ static void init_mdl_psi_keys(void) {
 
 PSI_stage_info MDL_key::m_namespace_to_wait_state_name[NAMESPACE_END] = {
     {0, "Waiting for global read lock", 0, PSI_DOCUMENT_ME},
+    {0, "Waiting for backup lock", 0, PSI_DOCUMENT_ME},
     {0, "Waiting for tablespace metadata lock", 0, PSI_DOCUMENT_ME},
     {0, "Waiting for schema metadata lock", 0, PSI_DOCUMENT_ME},
     {0, "Waiting for table metadata lock", 0, PSI_DOCUMENT_ME},
@@ -148,7 +149,6 @@ PSI_stage_info MDL_key::m_namespace_to_wait_state_name[NAMESPACE_END] = {
     {0, "Waiting for spatial reference system lock", 0, PSI_DOCUMENT_ME},
     {0, "Waiting for acl cache lock", 0, PSI_DOCUMENT_ME},
     {0, "Waiting for column statistics lock", 0, PSI_DOCUMENT_ME},
-    {0, "Waiting for backup lock", 0, PSI_DOCUMENT_ME},
     {0, "Waiting for resource groups metadata lock", 0, PSI_DOCUMENT_ME},
     {0, "Waiting for foreign key metadata lock", 0, PSI_DOCUMENT_ME},
     {0, "Waiting for check constraint metadata lock", 0, PSI_DOCUMENT_ME},
@@ -170,7 +170,7 @@ void MDL_key::init_psi_keys() {
 }
 #endif
 
-static bool mdl_initialized = 0;
+static bool mdl_initialized = false;
 
 /**
   A collection of all MDL locks. A singleton,
@@ -3565,7 +3565,7 @@ bool MDL_context::acquire_lock(MDL_request *mdl_request,
   /* Normal, non-zero timeout case. */
 
   MDL_lock *lock;
-  MDL_ticket *ticket;
+  MDL_ticket *ticket = nullptr;
   struct timespec abs_timeout;
   MDL_wait::enum_wait_status wait_status;
   /* Do some work outside the critical section. */
@@ -4172,7 +4172,7 @@ bool MDL_context::visit_subgraph(MDL_wait_for_graph_visitor *gvisitor) {
 */
 
 void MDL_context::find_deadlock() {
-  while (1) {
+  while (true) {
     /*
       The fact that we use fresh instance of gvisitor for each
       search performed by find_deadlock() below is important,
@@ -5110,30 +5110,70 @@ MDL_ticket *MDL_ticket_store::materialized_front(int di) {
 #ifdef WITH_WSREP
 void MDL_ticket::wsrep_report(bool debug) {
   if (debug) {
-      WSREP_DEBUG("MDL ticket: type: %s, space: %s, db: %s, name: %s",
-       	 (get_type()  == MDL_INTENTION_EXCLUSIVE)  ? "intention exclusive"  :
-       	 ((get_type() == MDL_SHARED)               ? "shared"               :
-       	 ((get_type() == MDL_SHARED_HIGH_PRIO      ? "shared high prio"     :
-       	 ((get_type() == MDL_SHARED_READ)          ? "shared read"          :
-       	 ((get_type() == MDL_SHARED_WRITE)         ? "shared write"         :
-       	 ((get_type() == MDL_SHARED_WRITE_LOW_PRIO)? "shared write low prio":
-       	 ((get_type() == MDL_SHARED_UPGRADABLE)    ? "shared upgradable"    :
-       	 ((get_type() == MDL_SHARED_READ_ONLY)     ? "shared read only"     :
-       	 ((get_type() == MDL_SHARED_NO_WRITE)      ? "shared no write"      :
-         ((get_type() == MDL_SHARED_NO_READ_WRITE) ? "shared no read write" :
-       	 ((get_type() == MDL_EXCLUSIVE)            ? "exclusive"            :
-          "UNKNOWN"))))))))))),
-         (m_lock->key.mdl_namespace()  == MDL_key::GLOBAL)    ? "GLOBAL"       :
-         ((m_lock->key.mdl_namespace() == MDL_key::SCHEMA)    ? "SCHEMA"       :
-         ((m_lock->key.mdl_namespace() == MDL_key::TABLE)     ? "TABLE"        :
-         ((m_lock->key.mdl_namespace() == MDL_key::FUNCTION)  ? "FUNCTION"     :
-         ((m_lock->key.mdl_namespace() == MDL_key::PROCEDURE) ? "PROCEDURE"    :
-         ((m_lock->key.mdl_namespace() == MDL_key::TRIGGER)   ? "TRIGGER"      :
-         ((m_lock->key.mdl_namespace() == MDL_key::EVENT)     ? "EVENT"        :
-         ((m_lock->key.mdl_namespace() == MDL_key::COMMIT)    ? "COMMIT"       :
-         "UNKNOWN"))))))),
-         m_lock->key.db_name(),
-         m_lock->key.name());
+    WSREP_DEBUG(
+        "MDL ticket: type: %s, space: %s, db: %s, name: %s",
+        (get_type() == MDL_INTENTION_EXCLUSIVE)
+            ? "intention exclusive"
+            : ((get_type() == MDL_SHARED)
+                   ? "shared"
+                   : ((get_type() == MDL_SHARED_HIGH_PRIO
+                           ? "shared high prio"
+                           : ((get_type() == MDL_SHARED_READ)
+                                  ? "shared read"
+                                  : ((get_type() == MDL_SHARED_WRITE)
+                                         ? "shared write"
+                                         : ((get_type() ==
+                                             MDL_SHARED_WRITE_LOW_PRIO)
+                                                ? "shared write low prio"
+                                                : ((get_type() ==
+                                                    MDL_SHARED_UPGRADABLE)
+                                                       ? "shared upgradable"
+                                                       : ((get_type() ==
+                                                           MDL_SHARED_READ_ONLY)
+                                                              ? "shared read "
+                                                                "only"
+                                                              : ((get_type() ==
+                                                                  MDL_SHARED_NO_WRITE)
+                                                                     ? "shared "
+                                                                       "no "
+                                                                       "write"
+                                                                     : ((get_type() ==
+                                                                         MDL_SHARED_NO_READ_WRITE)
+                                                                            ? "shared no read write"
+                                                                            : ((get_type() ==
+                                                                                MDL_EXCLUSIVE)
+                                                                                   ? "exclusive"
+                                                                                   : "UNKNOWN"))))))))))),
+        (m_lock->key.mdl_namespace() == MDL_key::GLOBAL)
+            ? "GLOBAL"
+            : ((m_lock->key.mdl_namespace() == MDL_key::TABLESPACE)
+                   ? "TABLESPACE"
+                   : ((m_lock->key.mdl_namespace() == MDL_key::SCHEMA)
+                          ? "SCHEMA"
+                          : ((m_lock->key.mdl_namespace() == MDL_key::TABLE)
+                                 ? "TABLE"
+                                 : ((m_lock->key.mdl_namespace() ==
+                                     MDL_key::FUNCTION)
+                                        ? "FUNCTION"
+                                        : ((m_lock->key.mdl_namespace() ==
+                                            MDL_key::PROCEDURE)
+                                               ? "PROCEDURE"
+                                               : ((m_lock->key
+                                                       .mdl_namespace() ==
+                                                   MDL_key::TRIGGER)
+                                                      ? "TRIGGER"
+                                                      : ((m_lock->key
+                                                              .mdl_namespace() ==
+                                                          MDL_key::EVENT)
+                                                             ? "EVENT"
+                                                             : ((m_lock->key
+                                                                     .mdl_namespace() ==
+                                                                 MDL_key::
+                                                                     COMMIT)
+                                                                    ? "COMMIT"
+                                                                    : "UNKNOW"
+                                                                      "N")))))))),
+        m_lock->key.db_name(), m_lock->key.name());
   }
 }
 
@@ -5160,4 +5200,3 @@ bool MDL_ticket_store::wsrep_has_non_preemptable_tickets() {
   return (non_preemptable);
 }
 #endif /* WITH_WSREP */
-

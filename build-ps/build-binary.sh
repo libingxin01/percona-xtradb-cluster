@@ -260,8 +260,8 @@ fi
 TOKUDB_BACKUP_VERSION="${MYSQL_VERSION}${MYSQL_VERSION_EXTRA}"
 
 RELEASE_TAG=''
-PRODUCT_NAME="Percona-XtraDB-Cluster_$MYSQL_VERSION$PERCONA_SERVER_EXTENSION"
-PRODUCT_FULL_NAME="${PRODUCT_NAME}-${WSREP_VERSION}_${BUILD_COMMENT}$(uname -s)${DIST_NAME:-}.$MACHINE_SPECS${SSL_VER:-}"
+PRODUCT_NAME="Percona-XtraDB-Cluster_$MYSQL_VERSION$MYSQL_VERSION_EXTRA"
+PRODUCT_FULL_NAME="${PRODUCT_NAME}.${TAG}_${BUILD_COMMENT}$(uname -s)${DIST_NAME:-}.$MACHINE_SPECS${GLIBC_VER:-}"
 
 #
 # This corresponds to GIT revision when the build/package is created.
@@ -274,8 +274,8 @@ then
 else
     REVISION=""
 fi
-COMMENT="Percona XtraDB Cluster binary (GPL) $MYSQL_VERSION-$RELEASE_TAG$WSREP_VERSION"
-COMMENT="$COMMENT, Revision $REVISION${BUILD_COMMENT:-}"
+COMMENT="Percona XtraDB Cluster binary (GPL) $MYSQL_VERSION"
+COMMENT="$COMMENT, Revision $REVISION${BUILD_COMMENT:-}, WSREP version $WSREP_VERSION"
 
 #-------------------------------------------------------------------------------
 #
@@ -418,7 +418,7 @@ fi
             -DWITH_ZSTD=bundled \
             -DWITH_NUMA=ON \
             -DWITH_BOOST="$TARGETDIR/libboost" \
-            -DMYSQL_SERVER_SUFFIX="-$WSREP_VERSION" \
+            -DMYSQL_SERVER_SUFFIX="" \
             -DWITH_WSREP=ON \
             -DWITH_UNIT_TESTS=0 \
             -DWITH_DEBUG=ON \
@@ -434,7 +434,7 @@ fi
             -DFEATURE_SET=community \
             -DCMAKE_INSTALL_PREFIX="$TARGETDIR/usr/local/$PRODUCT_FULL_NAME" \
             -DMYSQL_DATADIR="$TARGETDIR/usr/local/$PRODUCT_FULL_NAME/data" \
-            -DCOMPILATION_COMMENT="$COMMENT - UNIV_DEBUG ON" \
+            -DCOMPILATION_COMMENT="$COMMENT" \
             -DWITH_PAM=ON \
             -DWITHOUT_ROCKSDB=ON \
             -DWITHOUT_TOKUDB=ON \
@@ -452,7 +452,7 @@ fi
             -DWITH_ZSTD=bundled \
             -DWITH_NUMA=ON \
             -DWITH_BOOST="$TARGETDIR/libboost" \
-            -DMYSQL_SERVER_SUFFIX="-$WSREP_VERSION" \
+            -DMYSQL_SERVER_SUFFIX="" \
             -DWITH_WSREP=ON \
             -DWITH_UNIT_TESTS=0 \
             $WITH_MECAB_OPTION $OPENSSL_INCLUDE $OPENSSL_LIBRARY $CRYPTO_LIBRARY
@@ -493,12 +493,18 @@ fi
             echo "Could not find percona-xtrabackup-2.4 tarball in $TARGETDIR.  Terminating."
             exit 1
         fi
+        # Remove the .tar.gz extension
+        pxb_basename=${pxb_tar%.tar*}
+        # Pull the name (up-to-the x86_64 part
+        if [[ $pxb_basename =~ x86_64 ]]; then
+            pxb_basename="${pxb_basename%x86_64*}x86_64"
+        fi
         pxb_dir="pxb-2.4"
 
         mkdir -p pxc_extra
         cd pxc_extra
-        if [[ -d ${pxb_dir} ]]; then
-            echo "Using existing pxb 2.4 directory"
+        if [[ -d ${pxb_basename} ]]; then
+            echo "Using existing pxb 2.4 directory : ${pxb_basename}"
         else
             echo "Removing existing percona-xtrabackup-2.4 basedir (if found)"
             find . -maxdepth 1 -type d -name 'percona-xtrabackup-2.*' -exec rm -rf {} \+
@@ -506,7 +512,9 @@ fi
             echo "Extracting pxb 2.4 tarball"
             tar -xzf "../$pxb_tar"
         fi
-        echo "Creating symlink pxc_extra/pxb-2.4 --> $pxb_dir"
+        echo "Creating symlink $pxb_dir --> $pxb_basename"
+        rm -f pxb-2.4
+        ln -s ./${pxb_basename} pxb-2.4
     ) || exit 1
 
     (
@@ -516,12 +524,18 @@ fi
             echo "Could not find percona-xtrabackup-8.0 tarball in $TARGETDIR.  Terminating."
             exit 1
         fi
+        # Remove the .tar.gz extension
+        pxb_basename=${pxb_tar%.tar*}
+        # Pull the name (up-to-the x86_64 part
+        if [[ $pxb_basename =~ x86_64 ]]; then
+            pxb_basename="${pxb_basename%x86_64*}x86_64"
+        fi
         pxb_dir="pxb-8.0"
 
         mkdir -p pxc_extra
         cd pxc_extra
-        if [[ -d ${pxb_dir} ]]; then
-            echo "Using existing pxb 8.0 directory"
+        if [[ -d ${pxb_basename} ]]; then
+            echo "Using existing pxb 8.0 directory : ${pxb_basename}"
         else
             echo "Removing existing percona-xtrabackup-8.0 basedir (if found)"
             find . -maxdepth 1 -type d -name 'percona-xtrabackup-8.*' -exec rm -rf {} \+
@@ -529,7 +543,9 @@ fi
             echo "Extracting pxb 8.0 tarball"
             tar -xzf "../$pxb_tar"
         fi
-        echo "Creating symlink pxc_extra/pxb-8.0 --> $pxb_dir"
+        echo "Creating symlink $pxb_dir --> $pxb_basename"
+        rm -f pxb-8.0
+        ln -s ./${pxb_basename} pxb-8.0
     ) || exit 1
 
     # Only copy over the bin and lib portions of the xtrabackup packages
@@ -544,11 +560,126 @@ fi
 
 ) || exit 1
 
+# Patch needed libraries
+(
+    LIBLIST="libcrypto.so libssl.so libgcrypt.so libreadline.so libtinfo.so libsasl2.so libcurl.so libldap liblber libssh libbrotlidec.so libbrotlicommon.so libgssapi_krb5.so libkrb5.so libkrb5support.so libk5crypto.so librtmp.so libgssapi.so libfreebl3.so libssl3.so libsmime3.so libnss3.so libnssutil3.so libplds4.so libplc4.so libnspr4.so libssl3.so libplds4.so libtirpc.so"
+    DIRLIST="bin bin/pxc_extra/pxb-8.0/bin bin/pxc_extra/pxb-2.4/bin lib bin/pxc_extra/pxb-8.0/lib/plugin bin/pxc_extra/pxb-2.4/lib/plugin lib/private lib/plugin"
+
+    LIBPATH=""
+
+    function gather_libs {
+        local elf_path=$1
+        for lib in $LIBLIST; do
+            for elf in $(find $elf_path -maxdepth 1 -exec file {} \; | grep 'ELF ' | cut -d':' -f1); do
+                IFS=$'\n'
+                for libfromelf in $(ldd $elf | grep $lib | awk '{print $3}'); do
+                    if [ ! -f lib/private/$(basename $(readlink -f $libfromelf)) ] && [ ! -L lib/$(basename $(readlink -f $libfromelf)) ]; then
+                        echo "Copying lib $(basename $(readlink -f $libfromelf))"
+                        cp $(readlink -f $libfromelf) lib/private
+
+                        echo "Symlinking lib $(basename $(readlink -f $libfromelf))"
+                        cd lib
+                        ln -s private/$(basename $(readlink -f $libfromelf)) $(basename $(readlink -f $libfromelf))
+                        cd -
+                        
+                        LIBPATH+=" $(echo $libfromelf | grep -v $(pwd))"
+                    fi
+                done
+                unset IFS
+            done
+        done
+    }
+
+    function set_runpath {
+        # Set proper runpath for bins but check before doing anything
+        local elf_path=$1
+        local r_path=$2
+        for elf in $(find $elf_path -maxdepth 1 -exec file {} \; | grep 'ELF ' | cut -d':' -f1); do
+            echo "Checking LD_RUNPATH for $elf"
+            if [ -z $(patchelf --print-rpath $elf) ]; then
+                echo "Changing RUNPATH for $elf"
+                patchelf --set-rpath $r_path $elf
+            fi
+        done
+    }
+
+    function replace_libs {
+        local elf_path=$1
+        for libpath_sorted in $LIBPATH; do
+            for elf in $(find $elf_path -maxdepth 1 -exec file {} \; | grep 'ELF ' | cut -d':' -f1); do
+                LDD=$(ldd $elf | grep $libpath_sorted|head -n1|awk '{print $1}')
+                if [[ ! -z $LDD  ]]; then
+                    echo "Replacing lib $(basename $(readlink -f $libpath_sorted)) for $elf"
+                    patchelf --replace-needed $LDD $(basename $(readlink -f $libpath_sorted)) $elf
+                fi
+                # Add if present in LDD to NEEDED
+                if [[ ! -z $LDD ]] && [[ -z "$(readelf -d $elf | grep $(basename $libpath_sorted | awk -F'.' '{print $1}'))" ]]; then
+                    patchelf --add-needed $(basename $(readlink -f $libpath_sorted)) $elf
+                fi
+            done
+        done
+    }
+    function check_libs {
+        local elf_path=$1
+        for elf in $(find $elf_path -maxdepth 1 -exec file {} \; | grep 'ELF ' | cut -d':' -f1); do
+            if ! ldd $elf; then
+                exit 1
+            fi
+        done
+    }
+
+    function link {
+        if [ ! -d lib/private ]; then
+            mkdir -p lib/private
+        fi
+        # Gather libs
+        for DIR in $DIRLIST; do
+            gather_libs $DIR
+        done
+
+        # Set proper runpath
+        set_runpath bin '$ORIGIN/../lib/private/'
+        set_runpath bin/pxc_extra/pxb-2.4/bin '$ORIGIN/../../../../lib/private/'
+        set_runpath bin/pxc_extra/pxb-8.0/bin '$ORIGIN/../../../../lib/private/'
+        set_runpath lib '$ORIGIN/private/'
+        set_runpath bin/pxc_extra/pxb-2.4/lib/plugin '$ORIGIN/../../../../../lib/private/'
+        set_runpath bin/pxc_extra/pxb-8.0/lib/plugin '$ORIGIN/../../../../../lib/private/'
+        set_runpath lib/plugin '$ORIGIN/../private/'
+        set_runpath lib/private '$ORIGIN'
+
+        # Replace libs
+        for DIR in $DIRLIST; do
+            replace_libs $DIR
+        done
+
+        # Make final check in order to determine any error after linkage
+        for DIR in $DIRLIST; do
+            check_libs $DIR
+        done
+    }
+
+    mkdir -p "$TARGETDIR/usr/local/minimal"
+    cp -r "$TARGETDIR/usr/local/$PRODUCT_FULL_NAME" "$TARGETDIR/usr/local/minimal/$PRODUCT_FULL_NAME-minimal"
+
+    # NORMAL TARBALL
+    cd "$TARGETDIR/usr/local/$PRODUCT_FULL_NAME"
+    link
+
+    # MIN TARBALL
+    cd "$TARGETDIR/usr/local/minimal/$PRODUCT_FULL_NAME-minimal"
+    rm -rf mysql-test 2> /dev/null
+    rm -rf percona-xtradb-cluster-tests 2> /dev/null
+    find . -type f -exec file '{}' \; | grep ': ELF ' | cut -d':' -f1 | xargs strip --strip-unneeded
+    link
+)
+
 # Package the archive
 (
     cd "$TARGETDIR/usr/local/"
 
     $TAR --owner=0 --group=0 -czf "$TARGETDIR/$PRODUCT_FULL_NAME.tar.gz" $PRODUCT_FULL_NAME
+    cd "$TARGETDIR/usr/local/minimal/"
+    $TAR --owner=0 --group=0 -czf "$TARGETDIR/$PRODUCT_FULL_NAME-minimal.tar.gz" $PRODUCT_FULL_NAME-minimal
 ) || exit 1
 
 if [[ $KEEP_BUILD -eq 0 ]]

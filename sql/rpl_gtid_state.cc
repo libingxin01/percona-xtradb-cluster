@@ -54,6 +54,8 @@
 
 struct TABLE_LIST;
 
+#include <vector>
+
 PSI_memory_key key_memory_Gtid_state_group_commit_sidno;
 
 int Gtid_state::clear(THD *thd) {
@@ -153,6 +155,16 @@ void Gtid_state::broadcast_owned_sidnos(const THD *thd) {
   } else if (thd->owned_gtid.sidno > 0) {
     broadcast_sidno(thd->owned_gtid.sidno);
   }
+}
+
+void Gtid_state::get_snapshot_gtid_executed(
+    std::string &snapshot_gtid_executed) {
+  global_sid_lock->wrlock();
+  size_t size = executed_gtids.get_string_length() + 1;
+  std::vector<char> buf(size);
+  executed_gtids.to_string(buf.data());
+  snapshot_gtid_executed = buf.data();
+  global_sid_lock->unlock();
 }
 
 void Gtid_state::update_commit_group(THD *first_thd) {
@@ -480,12 +492,12 @@ enum_return_status Gtid_state::generate_automatic_gtid(
     /* If node is running in cluster mode then get wsrep_sidno */
     bool seqno_undefined = false;
     seqno_undefined = (wsrep_thd_is_toi(thd)
-                         ? thd->wsrep_cs().toi_meta().seqno().is_undefined()
-                         : thd->wsrep_trx().ws_meta().seqno().is_undefined());
+                           ? thd->wsrep_cs().toi_meta().seqno().is_undefined()
+                           : thd->wsrep_trx().ws_meta().seqno().is_undefined());
 
     if (WSREP(thd) && !seqno_undefined && !thd->wsrep_skip_wsrep_GTID)
       automatic_gtid.sidno = wsrep_sidno;
-    else
+    else if (automatic_gtid.sidno == 0)
       automatic_gtid.sidno = get_server_sidno();
 #else
     if (automatic_gtid.sidno == 0) automatic_gtid.sidno = get_server_sidno();
@@ -855,7 +867,7 @@ void Gtid_state::update_gtids_impl_own_gtid(THD *thd, bool is_commit) {
     In Group Replication the GTID may additionally be owned by another
     thread, and we won't remove that ownership (it will be rolled back later)
   */
-#ifdef WSREP 
+#ifdef WSREP
   /* Check comment associated with wsrep_replayer for more details. */
   if (WSREP(thd)) {
     DBUG_ASSERT(owned_gtids.is_owned_by(thd->owned_gtid, thd->thread_id()) ||

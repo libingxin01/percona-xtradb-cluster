@@ -1283,12 +1283,6 @@ void row_upd_index_replace_new_col_vals_index_pos(
 
       dfield_copy(&tmp->old_val, dfield);
 
-      if (dfield_is_ext(dfield)) {
-        byte *data = static_cast<byte *>(dfield_get_data(dfield));
-        ulint len = dfield_get_len(dfield);
-        lob::ref_t ref(data + len - lob::ref_t::SIZE);
-      }
-
       row_upd_index_replace_new_col_val(index, dfield, field, col, uf, heap,
                                         dict_index_is_sdi(index), page_size);
     }
@@ -2770,9 +2764,9 @@ static MY_ATTRIBUTE((warn_unused_result)) dberr_t row_upd_clust_rec_by_insert(
                       a foreign key constraint */
 #ifdef WITH_WSREP
     bool foreign, /*!< in: TRUE if index is foreign key index */
-#endif /* WITH_WSREP */
+#endif            /* WITH_WSREP */
 
-    mtr_t *mtr)          /*!< in/out: mtr; gets committed here */
+    mtr_t *mtr) /*!< in/out: mtr; gets committed here */
 {
   mem_heap_t *heap;
   btr_pcur_t *pcur;
@@ -3147,7 +3141,7 @@ static MY_ATTRIBUTE((warn_unused_result)) dberr_t row_upd_del_mark_clust_rec(
     ibool referenced,
 #ifdef WITH_WSREP
     bool foreign, /*!< in: TRUE if index is foreign key index */
-#endif /* WITH_WSREP */
+#endif            /* WITH_WSREP */
     /*!< in: TRUE if index may be referenced in
     a foreign key constraint */
     mtr_t *mtr) /*!< in: mtr; gets committed here */

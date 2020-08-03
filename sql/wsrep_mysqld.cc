@@ -20,11 +20,12 @@
 #include "sql/key_spec.h"
 #include "sql/sql_alter.h"
 #include "sql/sql_lex.h"
+#include "sql/ssl_acceptor_context.h"
+#include "sql/thd_raii.h"
 #include "sql_base.h"
 #include "sql_class.h"
 #include "sql_parse.h"
 #include "sql_plugin.h"  // SHOW_MY_BOOL
-#include "sql/ssl_acceptor_context.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -33,9 +34,9 @@
 
 #include "log_event.h"
 #include "mysql/components/services/log_builtins.h"
-#include "rpl_msr.h"   // channel_map
-#include "sql_base.h"  // TEMP_PREFIX
+#include "rpl_msr.h"  // channel_map
 #include "sp_head.h"
+#include "sql_base.h"  // TEMP_PREFIX
 #include "wsrep_applier.h"
 #include "wsrep_binlog.h"
 #include "wsrep_priv.h"
@@ -80,9 +81,10 @@ rpl_sidno wsrep_sidno = -1;
 
 const char *wsrep_data_home_dir = NULL;
 const char *wsrep_dbug_option = "";
+uint wsrep_min_log_verbosity = 3;
 long wsrep_slave_threads = 1;           // # of slave action appliers wanted
 int wsrep_slave_count_change = 0;       // # of appliers to stop or start
-ulong wsrep_debug = 0;                   // enable debug level logging
+ulong wsrep_debug = 0;                  // enable debug level logging
 ulong wsrep_retry_autocommit = 5;       // retry aborted autocommit trx
 bool wsrep_auto_increment_control = 1;  // control auto increment variables
 bool wsrep_incremental_data_collection = 0;  // incremental data collection
@@ -121,6 +123,12 @@ ulong pxc_strict_mode = PXC_STRICT_MODE_ENFORCING;
 can stop diverting queries to this node. */
 ulong pxc_maint_mode = PXC_MAINT_MODE_DISABLED;
 
+/* wsrep-pxc-maint-mode controls whenever maintenance mode has been set by
+ * Wsrep_server_service::log_view.
+ * This blocks users from changing pxc_maint_mode
+ */
+bool wsrep_pxc_maint_mode_forced = false;
+
 /* sleep for this period before delivering shutdown signal. */
 ulong pxc_maint_transition_period = 30;
 
@@ -149,7 +157,6 @@ static char provider_vendor[256] = {
 
 /* Set to true on successful connect and false on disconnect. */
 bool wsrep_connected = false;
-
 
 // wsrep status variable - start
 bool wsrep_ready = false;  // node can accept queries
@@ -212,27 +219,38 @@ PSI_mutex_key key_LOCK_galera_mempool;
 PSI_mutex_info all_galera_mutexes[] = {
     {&key_LOCK_galera_cert, "LOCK_galera_cert", 0, 0, PSI_DOCUMENT_ME},
     {&key_LOCK_galera_stats, "LOCK_galera_stats", 0, 0, PSI_DOCUMENT_ME},
-    {&key_LOCK_galera_dummy_gcs, "LOCK_galera_dummy_gcs", 0, 0, PSI_DOCUMENT_ME},
-    {&key_LOCK_galera_service_thd, "LOCK_galera_service_thd", 0, 0, PSI_DOCUMENT_ME},
-    {&key_LOCK_galera_ist_receiver, "LOCK_galera_ist_receiver", 0, 0, PSI_DOCUMENT_ME},
-    {&key_LOCK_galera_local_monitor, "LOCK_galera_local_monitor", 0, 0, PSI_DOCUMENT_ME},
-    {&key_LOCK_galera_apply_monitor, "LOCK_galera_apply_monitor", 0, 0, PSI_DOCUMENT_ME},
-    {&key_LOCK_galera_commit_monitor, "LOCK_galera_commit_monitor", 0, 0, PSI_DOCUMENT_ME},
+    {&key_LOCK_galera_dummy_gcs, "LOCK_galera_dummy_gcs", 0, 0,
+     PSI_DOCUMENT_ME},
+    {&key_LOCK_galera_service_thd, "LOCK_galera_service_thd", 0, 0,
+     PSI_DOCUMENT_ME},
+    {&key_LOCK_galera_ist_receiver, "LOCK_galera_ist_receiver", 0, 0,
+     PSI_DOCUMENT_ME},
+    {&key_LOCK_galera_local_monitor, "LOCK_galera_local_monitor", 0, 0,
+     PSI_DOCUMENT_ME},
+    {&key_LOCK_galera_apply_monitor, "LOCK_galera_apply_monitor", 0, 0,
+     PSI_DOCUMENT_ME},
+    {&key_LOCK_galera_commit_monitor, "LOCK_galera_commit_monitor", 0, 0,
+     PSI_DOCUMENT_ME},
     {&key_LOCK_galera_async_sender_monitor, "LOCK_galera_async_sender_monitor",
      0, 0, PSI_DOCUMENT_ME},
     {&key_LOCK_galera_ist_receiver_monitor, "LOCK_galera_ist_receiver_monitor",
      0, 0, PSI_DOCUMENT_ME},
     {&key_LOCK_galera_sst, "LOCK_galera_sst", 0, 0, PSI_DOCUMENT_ME},
     {&key_LOCK_galera_incoming, "LOCK_galera_incoming", 0, 0, PSI_DOCUMENT_ME},
-    {&key_LOCK_galera_saved_state, "LOCK_galera_saved_state", 0, 0, PSI_DOCUMENT_ME},
-    {&key_LOCK_galera_trx_handle, "LOCK_galera_trx_handle", 0, 0, PSI_DOCUMENT_ME},
+    {&key_LOCK_galera_saved_state, "LOCK_galera_saved_state", 0, 0,
+     PSI_DOCUMENT_ME},
+    {&key_LOCK_galera_trx_handle, "LOCK_galera_trx_handle", 0, 0,
+     PSI_DOCUMENT_ME},
     {&key_LOCK_galera_wsdb_trx, "LOCK_galera_wsdb", 0, 0, PSI_DOCUMENT_ME},
-    {&key_LOCK_galera_wsdb_conn, "LOCK_galera_wsdb_conn", 0, 0, PSI_DOCUMENT_ME},
+    {&key_LOCK_galera_wsdb_conn, "LOCK_galera_wsdb_conn", 0, 0,
+     PSI_DOCUMENT_ME},
     {&key_LOCK_galera_profile, "LOCK_galera_profile", 0, 0, PSI_DOCUMENT_ME},
     {&key_LOCK_galera_gcache, "LOCK_galera_gcache", 0, 0, PSI_DOCUMENT_ME},
-    {&key_LOCK_galera_protstack, "LOCK_galera_protstack", 0, 0, PSI_DOCUMENT_ME},
+    {&key_LOCK_galera_protstack, "LOCK_galera_protstack", 0, 0,
+     PSI_DOCUMENT_ME},
     {&key_LOCK_galera_prodcons, "LOCK_galera_prodcons", 0, 0, PSI_DOCUMENT_ME},
-    {&key_LOCK_galera_gcommconn, "LOCK_galera_gcommconn", 0, 0, PSI_DOCUMENT_ME},
+    {&key_LOCK_galera_gcommconn, "LOCK_galera_gcommconn", 0, 0,
+     PSI_DOCUMENT_ME},
     {&key_LOCK_galera_recvbuf, "LOCK_galera_recvbuf", 0, 0, PSI_DOCUMENT_ME},
     {&key_LOCK_galera_mempool, "LOCK_galera_mempool", 0, 0, PSI_DOCUMENT_ME}};
 
@@ -257,14 +275,22 @@ PSI_cond_key key_COND_galera_gcache;
 PSI_cond_key key_COND_galera_recvbuf;
 
 PSI_cond_info all_galera_condvars[] = {
-    {&key_COND_galera_dummy_gcs, "COND_galera_dummy_gcs", 0, 0, PSI_DOCUMENT_ME},
-    {&key_COND_galera_service_thd, "COND_galera_service_thd", 0, 0, PSI_DOCUMENT_ME},
-    {&key_COND_galera_service_thd_flush, "COND_galera_service_thd_flush", 0, 0, PSI_DOCUMENT_ME},
-    {&key_COND_galera_ist_receiver, "COND_galera_ist_receiver", 0, 0, PSI_DOCUMENT_ME},
-    {&key_COND_galera_ist_consumer, "COND_galera_ist_consumer", 0, 0, PSI_DOCUMENT_ME},
-    {&key_COND_galera_local_monitor, "COND_galera_local_monitor", 0, 0, PSI_DOCUMENT_ME},
-    {&key_COND_galera_apply_monitor, "COND_galera_apply_monitor", 0, 0, PSI_DOCUMENT_ME},
-    {&key_COND_galera_commit_monitor, "COND_galera_commit_monitor", 0, 0, PSI_DOCUMENT_ME},
+    {&key_COND_galera_dummy_gcs, "COND_galera_dummy_gcs", 0, 0,
+     PSI_DOCUMENT_ME},
+    {&key_COND_galera_service_thd, "COND_galera_service_thd", 0, 0,
+     PSI_DOCUMENT_ME},
+    {&key_COND_galera_service_thd_flush, "COND_galera_service_thd_flush", 0, 0,
+     PSI_DOCUMENT_ME},
+    {&key_COND_galera_ist_receiver, "COND_galera_ist_receiver", 0, 0,
+     PSI_DOCUMENT_ME},
+    {&key_COND_galera_ist_consumer, "COND_galera_ist_consumer", 0, 0,
+     PSI_DOCUMENT_ME},
+    {&key_COND_galera_local_monitor, "COND_galera_local_monitor", 0, 0,
+     PSI_DOCUMENT_ME},
+    {&key_COND_galera_apply_monitor, "COND_galera_apply_monitor", 0, 0,
+     PSI_DOCUMENT_ME},
+    {&key_COND_galera_commit_monitor, "COND_galera_commit_monitor", 0, 0,
+     PSI_DOCUMENT_ME},
     {&key_COND_galera_async_sender_monitor, "COND_galera_async_sender_monitor",
      0, 0, PSI_DOCUMENT_ME},
     {&key_COND_galera_ist_receiver_monitor, "COND_galera_ist_receiver_monitor",
@@ -283,15 +309,20 @@ PSI_thread_key key_THREAD_galera_receiver;
 PSI_thread_key key_THREAD_galera_gcommconn;
 
 PSI_thread_info all_galera_threads[] = {
-    {&key_THREAD_galera_service_thd, "THREAD_galera_service_thd", 0, 0, PSI_DOCUMENT_ME},
-    {&key_THREAD_galera_ist_receiver, "THREAD_galera_ist_receiver", 0, 0, PSI_DOCUMENT_ME},
-    {&key_THREAD_galera_ist_async_sender, "THREAD_galera_ist_async_sender", 0, 0, PSI_DOCUMENT_ME},
-    {&key_THREAD_galera_writeset_checksum, "THREAD_galera_writeset_checksum",
-     0, 0, PSI_DOCUMENT_ME},
-    {&key_THREAD_galera_gcache_removefile, "THREAD_galera_gcache_removefile",
-     0, 0, PSI_DOCUMENT_ME},
-    {&key_THREAD_galera_receiver, "THREAD_galera_receiver", 0, 0, PSI_DOCUMENT_ME},
-    {&key_THREAD_galera_gcommconn, "THREAD_galera_gcommconn", 0, 0, PSI_DOCUMENT_ME}};
+    {&key_THREAD_galera_service_thd, "THREAD_galera_service_thd", 0, 0,
+     PSI_DOCUMENT_ME},
+    {&key_THREAD_galera_ist_receiver, "THREAD_galera_ist_receiver", 0, 0,
+     PSI_DOCUMENT_ME},
+    {&key_THREAD_galera_ist_async_sender, "THREAD_galera_ist_async_sender", 0,
+     0, PSI_DOCUMENT_ME},
+    {&key_THREAD_galera_writeset_checksum, "THREAD_galera_writeset_checksum", 0,
+     0, PSI_DOCUMENT_ME},
+    {&key_THREAD_galera_gcache_removefile, "THREAD_galera_gcache_removefile", 0,
+     0, PSI_DOCUMENT_ME},
+    {&key_THREAD_galera_receiver, "THREAD_galera_receiver", 0, 0,
+     PSI_DOCUMENT_ME},
+    {&key_THREAD_galera_gcommconn, "THREAD_galera_gcommconn", 0, 0,
+     PSI_DOCUMENT_ME}};
 
 PSI_file_key key_FILE_galera_recordset;
 PSI_file_key key_FILE_galera_ringbuffer;
@@ -300,9 +331,12 @@ PSI_file_key key_FILE_galera_grastate;
 PSI_file_key key_FILE_galera_gvwstate;
 
 PSI_file_info all_galera_files[] = {
-    {&key_FILE_galera_recordset, "FILE_galera_recordset", 0, 0, PSI_DOCUMENT_ME},
-    {&key_FILE_galera_ringbuffer, "FILE_galera_ringbuffer", 0, 0, PSI_DOCUMENT_ME},
-    {&key_FILE_galera_gcache_page, "FILE_galera_gcache_page", 0, 0, PSI_DOCUMENT_ME},
+    {&key_FILE_galera_recordset, "FILE_galera_recordset", 0, 0,
+     PSI_DOCUMENT_ME},
+    {&key_FILE_galera_ringbuffer, "FILE_galera_ringbuffer", 0, 0,
+     PSI_DOCUMENT_ME},
+    {&key_FILE_galera_gcache_page, "FILE_galera_gcache_page", 0, 0,
+     PSI_DOCUMENT_ME},
     {&key_FILE_galera_grastate, "FILE_galera_grastate", 0, 0, PSI_DOCUMENT_ME},
     {&key_FILE_galera_gvwstate, "FILE_galera_gvwstate", 0, 0, PSI_DOCUMENT_ME}};
 
@@ -579,7 +613,7 @@ static void wsrep_log_cb(wsrep::log::level level, const char *msg) {
   }
 }
 
-void wsrep_init_sidno(const wsrep::id& uuid) {
+void wsrep_init_sidno(const wsrep::id &uuid) {
   /*
     Protocol versions starting from 4 use group gtid as it is.
     For lesser protocol versions generate new Sid map entry from inverted
@@ -602,17 +636,30 @@ void wsrep_init_sidno(const wsrep::id& uuid) {
   global_sid_lock->unlock();
 }
 
-void wsrep_init_schema() {
+bool wsrep_init_schema(THD *thd) {
   DBUG_ASSERT(!wsrep_schema);
+
+  /*
+   PXC upgrade requires modifications to some InnoDB tables.
+   When the server is started without innodb, or without a read-write innodb,
+   missing this user is a non-issue, since we won't participate in SST anyway.
+   */
+  handlerton *ddse = ha_resolve_by_legacy_type(thd, DB_TYPE_INNODB);
+  if (ddse->is_dict_readonly && ddse->is_dict_readonly()) {
+    LogErr(WARNING_LEVEL, ER_DD_NO_WRITES_NO_REPOPULATION, "InnoDB", " ");
+    return false;
+  }
 
   WSREP_INFO("wsrep_init_schema_and_SR %p", wsrep_schema);
   if (!wsrep_schema) {
     wsrep_schema = new Wsrep_schema();
-    if (wsrep_schema->init()) {
+    if (wsrep_schema->init(thd)) {
       WSREP_ERROR("Failed to init wsrep schema");
-      unireg_abort(1);
+      return true;
     }
   }
+
+  return false;
 }
 
 void wsrep_deinit_schema() {
@@ -812,7 +859,6 @@ static std::string wsrep_server_incoming_address() {
           WSREP_WARN(
               "Guessing address for incoming client connections: "
               "address too long.");
-          inc_addr[0] = '\0';
         }
       }
 
@@ -843,7 +889,9 @@ static std::string wsrep_server_incoming_address() {
   }
 
 done:
-  ret = wsrep_node_incoming_address;
+
+  // inc_addr contains proper address, or is empty string
+  ret = inc_addr;
   return ret;
 }
 
@@ -947,7 +995,6 @@ int wsrep_init_server() {
 
 void wsrep_init_globals() {
   wsrep_init_sidno(Wsrep_server_state::instance().connected_gtid().id());
-  wsrep_init_schema();
   if (WSREP_ON) {
     Wsrep_server_state::instance().initialized();
   }
@@ -1030,6 +1077,14 @@ int wsrep_init() {
     return 1;
   }
 
+  if (Wsrep_server_state::get_provider().capabilities() == 0) {
+    WSREP_ERROR(
+        "Unable to discover capabilities for the given provider."
+        " Check if protocol version is correctly configured");
+    Wsrep_server_state::instance().unload_provider();
+    return 1;
+  }
+
   if (!wsrep_provider_is_SR_capable() &&
       global_system_variables.wsrep_trx_fragment_size > 0) {
     WSREP_ERROR(
@@ -1079,10 +1134,17 @@ void wsrep_init_startup(bool sst_first) {
     With mysqldump SST (!sst_first) wait until the server reaches
     joiner state and proceed to accepting connections.
   */
-  if (sst_first) {
-    server_state.wait_until_state(Wsrep_server_state::s_initializing);
-  } else {
-    server_state.wait_until_state(Wsrep_server_state::s_joiner);
+  try {
+    if (sst_first) {
+      server_state.wait_until_state(Wsrep_server_state::s_initializing);
+    } else {
+      server_state.wait_until_state(Wsrep_server_state::s_joiner);
+    }
+  } catch (const wsrep::runtime_error &e) {
+    // While waiting for 'initializing' or 'joiner' state we got 'disconnecting'
+    // state. It means that something went wrong during wsrep provider
+    // initialization and we cannot recover anyway.
+    unireg_abort(MYSQLD_ABORT_EXIT);
   }
 }
 
@@ -1251,8 +1313,7 @@ bool wsrep_must_sync_wait(THD *thd, uint mask) {
   bool ret;
   mysql_mutex_lock(&thd->LOCK_wsrep_thd);
   ret = (thd->variables.wsrep_sync_wait & mask) && thd->wsrep_client_thread &&
-        thd->variables.wsrep_on &&
-        !thd->in_active_multi_stmt_transaction() &&
+        thd->variables.wsrep_on && !thd->in_active_multi_stmt_transaction() &&
         thd->wsrep_trx().state() != wsrep::transaction::s_replaying &&
         thd->wsrep_cs().sync_wait_gtid().is_undefined();
   mysql_mutex_unlock(&thd->LOCK_wsrep_thd);
@@ -1302,10 +1363,10 @@ bool wsrep_sync_wait(THD *thd, uint mask) {
   return false;
 }
 
-enum wsrep::provider::status wsrep_sync_wait_upto(THD *thd
-                                                  __attribute__((unused)),
-                                                  wsrep_gtid_t *upto,
-                                                  int timeout) {
+enum wsrep::provider::status wsrep_sync_wait_upto_gtid(THD *thd
+                                                       __attribute__((unused)),
+                                                       wsrep_gtid_t *upto,
+                                                       int timeout) {
   DBUG_ASSERT(upto);
   enum wsrep::provider::status ret;
   if (upto) {
@@ -1315,13 +1376,13 @@ enum wsrep::provider::status wsrep_sync_wait_upto(THD *thd
   } else {
     ret = Wsrep_server_state::instance().causal_read(timeout).second;
   }
-  WSREP_DEBUG("wsrep_sync_wait_upto: %d", ret);
+  WSREP_DEBUG("wsrep_sync_wait_upto_gtid: %d", ret);
   return ret;
 }
 
 void wsrep_keys_free(wsrep_key_arr_t *key_arr) {
   for (size_t i = 0; i < key_arr->keys_len; ++i) {
-    my_free(const_cast<wsrep_buf_t*>(key_arr->keys[i].key_parts));
+    my_free(const_cast<wsrep_buf_t *>(key_arr->keys[i].key_parts));
   }
   my_free(key_arr->keys);
   key_arr->keys = 0;
@@ -1391,7 +1452,8 @@ static bool wsrep_prepare_key_for_isolation(const char *db, const char *table,
   ka->keys[ka->keys_len].key_parts_num = 2;
   ++ka->keys_len;
   if (!wsrep_prepare_key_for_isolation(
-          db, table, const_cast<wsrep_buf_t *>(ka->keys[ka->keys_len - 1].key_parts),
+          db, table,
+          const_cast<wsrep_buf_t *>(ka->keys[ka->keys_len - 1].key_parts),
           &ka->keys[ka->keys_len - 1].key_parts_num)) {
     WSREP_ERROR("Preparing keys for isolation failed");
     return false;
@@ -1440,9 +1502,10 @@ static bool wsrep_prepare_keys_for_isolation(THD *, const char *db,
     if (!wsrep_prepare_key_for_isolation(db, table, ka)) goto err;
   }
 
-  for (const TABLE_LIST *table = table_list; table;
-       table = table->next_global) {
-    if (!wsrep_prepare_key_for_isolation(table->db, table->table_name, ka))
+  for (const TABLE_LIST *table_it = table_list; table_it;
+       table_it = table_it->next_global) {
+    if (!wsrep_prepare_key_for_isolation(table_it->db, table_it->table_name,
+                                         ka))
       goto err;
   }
 
@@ -1495,8 +1558,7 @@ bool wsrep_prepare_key_for_innodb(const uchar *cache_key, size_t cache_key_len,
       key[1].ptr =
           cache_key +
           strlen(reinterpret_cast<char *>(const_cast<uchar *>(cache_key))) + 1;
-      key[1].len =
-          strlen(static_cast<char *>(const_cast<void *>(key[1].ptr)));
+      key[1].len = strlen(static_cast<char *>(const_cast<void *>(key[1].ptr)));
 
       *key_len = 2;
       break;
@@ -1545,21 +1607,30 @@ wsrep::key_array wsrep_prepare_keys_for_alter_add_fk(const char *child_table_db,
 
 wsrep::key_array wsrep_prepare_keys_for_toi(const char *db, const char *table,
                                             const TABLE_LIST *table_list,
+                                            dd::Tablespace_table_ref_vec *trefs,
                                             Alter_info *alter_info) {
   wsrep::key_array ret;
   if (db || table) {
     ret.push_back(wsrep_prepare_key_for_toi(db, table, wsrep::key::exclusive));
   }
-  for (const TABLE_LIST *table = table_list; table;
-       table = table->next_global) {
-    ret.push_back(wsrep_prepare_key_for_toi(
-        table->get_db_name(), table->get_table_name(), wsrep::key::exclusive));
+  for (const TABLE_LIST *table_it = table_list; table_it;
+       table_it = table_it->next_global) {
+    ret.push_back(wsrep_prepare_key_for_toi(table_it->get_db_name(),
+                                            table_it->get_table_name(),
+                                            wsrep::key::exclusive));
   }
   if (alter_info && (alter_info->flags & Alter_info::ADD_FOREIGN_KEY)) {
     wsrep::key_array fk(wsrep_prepare_keys_for_alter_add_fk(
         table_list->get_db_name(), alter_info));
     if (!fk.empty()) {
       ret.insert(ret.end(), fk.begin(), fk.end());
+    }
+  }
+  if (trefs) {
+    for (auto &tref : *trefs) {
+      ret.push_back(wsrep_prepare_key_for_toi(tref.m_schema_name.c_str(),
+                                              tref.m_name.c_str(),
+                                              wsrep::key::exclusive));
     }
   }
   return ret;
@@ -1804,9 +1875,9 @@ static bool wsrep_can_run_in_toi(THD *thd, const char *db, const char *table,
       }
 
       if (table_list && first_table) {
-        for (TABLE_LIST *table = first_table; table;
-             table = table->next_global) {
-          if (!find_temporary_table(thd, table->db, table->table_name)) {
+        for (TABLE_LIST *table_it = first_table; table_it;
+             table_it = table_it->next_global) {
+          if (!find_temporary_table(thd, table_it->db, table_it->table_name)) {
             return true;
           }
         }
@@ -1864,7 +1935,7 @@ static void wsrep_TOI_begin_failed(THD *thd,
       goto fail;
     }
     wsrep::client_state &cs(thd->wsrep_cs());
-    int const ret= cs.leave_toi_local(wsrep::mutable_buffer());
+    int const ret = cs.leave_toi_local(wsrep::mutable_buffer());
     if (ret) {
       WSREP_ERROR(
           "Leaving critical section for failed TOI failed: thd: %lld, "
@@ -1889,6 +1960,7 @@ fail:
 
 static int wsrep_TOI_begin(THD *thd, const char *db_, const char *table_,
                            const TABLE_LIST *table_list,
+                           dd::Tablespace_table_ref_vec *trefs,
                            Alter_info *alter_info) {
   uchar *buf(0);
   size_t buf_len(0);
@@ -1936,7 +2008,7 @@ static int wsrep_TOI_begin(THD *thd, const char *db_, const char *table_,
   struct wsrep_buf buff = {buf, buf_len};
 
   wsrep::key_array key_array =
-      wsrep_prepare_keys_for_toi(db_, table_, table_list, alter_info);
+      wsrep_prepare_keys_for_toi(db_, table_, table_list, trefs, alter_info);
 
   THD_STAGE_INFO(thd, stage_wsrep_preparing_for_TO_isolation);
   snprintf(thd->wsrep_info, sizeof(thd->wsrep_info),
@@ -1946,10 +2018,9 @@ static int wsrep_TOI_begin(THD *thd, const char *db_, const char *table_,
   thd_proc_info(thd, thd->wsrep_info);
 
   wsrep::client_state &cs(thd->wsrep_cs());
-  int ret= cs.enter_toi_local(key_array,
-                              wsrep::const_buffer(buff.ptr, buff.len),
-                              wsrep::provider::flag::start_transaction |
-                              wsrep::provider::flag::commit);
+  int ret = cs.enter_toi_local(
+      key_array, wsrep::const_buffer(buff.ptr, buff.len),
+      wsrep::provider::flag::start_transaction | wsrep::provider::flag::commit);
 
   if (ret) {
     DBUG_ASSERT(cs.current_error());
@@ -2030,13 +2101,9 @@ static void wsrep_TOI_end(THD *thd) {
   thd_proc_info(thd, thd->wsrep_info);
 
   if (wsrep_thd_is_local_toi(thd)) {
+    wsrep_set_SE_checkpoint(client_state.toi_meta().gtid());
 
-    /* Skip update of SE checkpoint if the TOI/DDL failed. */
-    if (!thd->wsrep_skip_SE_checkpoint) {
-      wsrep_set_SE_checkpoint(client_state.toi_meta().gtid());
-    }
-
-    int ret= client_state.leave_toi_local(wsrep::mutable_buffer());
+    int ret = client_state.leave_toi_local(wsrep::mutable_buffer());
     if (!ret) {
       WSREP_DEBUG("TO END: %lld", client_state.toi_meta().seqno().get());
       /* Reset XID on completion of DDL transactions */
@@ -2072,6 +2139,7 @@ static void wsrep_RSU_end(THD *thd) {
 
 int wsrep_to_isolation_begin(THD *thd, const char *db_, const char *table_,
                              const TABLE_LIST *table_list,
+                             dd::Tablespace_table_ref_vec *trefs,
                              Alter_info *alter_info) {
   /*
     No isolation for applier or replaying threads.
@@ -2154,7 +2222,7 @@ int wsrep_to_isolation_begin(THD *thd, const char *db_, const char *table_,
   if (thd->variables.wsrep_on && wsrep_thd_is_local(thd)) {
     switch (thd->variables.wsrep_OSU_method) {
       case WSREP_OSU_TOI:
-        ret = wsrep_TOI_begin(thd, db_, table_, table_list, alter_info);
+        ret = wsrep_TOI_begin(thd, db_, table_, table_list, trefs, alter_info);
         break;
       case WSREP_OSU_RSU:
         ret = wsrep_RSU_begin(thd, db_, table_);
@@ -2461,4 +2529,3 @@ bool get_wsrep_recovery() { return wsrep_recovery; }
 bool wsrep_consistency_check(THD *thd) {
   return thd->wsrep_consistency_check == CONSISTENCY_CHECK_RUNNING;
 }
-

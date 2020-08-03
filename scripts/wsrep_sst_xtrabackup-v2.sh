@@ -33,14 +33,8 @@
 #
 
 # encryption specific variables.
-ealgo=""
-ekey=""
-ekeyfile=""
 encrypt=0
-ieopts=""
-xbstreameopts=""
-xbstreameopts_sst=""
-xbstreameopts_other=""
+xbstream_opts=""
 
 nproc=1
 ecode=0
@@ -48,17 +42,12 @@ ssyslog=""
 ssystag=""
 SST_PORT=""
 REMOTEIP=""
-tca=""
-tcert=""
-tkey=""
 sockopt=""
 ncsockopt=""
 progress=""
 ttime=0
 totime=0
 lsn=""
-ecmd=""
-ecmd_other=""
 rlimit=""
 stagemsg="${WSREP_SST_OPT_ROLE}"
 cpat=""
@@ -192,110 +181,6 @@ timeit()
         extcode=$?
     fi
     return $extcode
-}
-
-#
-# Configures the commands for encrypt=1
-# Sets up the parameters (algo/keys) for XB-based encryption
-# If the version of PXB is >= 2.4.7, changes the XB parameters
-# If the version of PXB is < 2.4.7, use xbcrypt instead
-#
-get_keys()
-{
-    # $encrypt -eq -1 is for internal purposes only
-    if [[ $encrypt -ge 2 || $encrypt -eq -1 ]]; then
-        return
-    fi
-
-    # TODO: it seems like encrypt=1/2/3/4 was not provided
-    if [[ $encrypt -eq 0 ]]; then
-        if $MY_PRINT_DEFAULTS -c $WSREP_SST_OPT_CONF xtrabackup | grep -q encrypt; then
-            wsrep_log_warning "Encryption configuration mis-match. SST may fail. Refer to http://www.percona.com/doc/percona-xtradb-cluster/manual/xtrabackup_sst.html for more details."
-        fi
-        return
-    fi
-
-    if [[ $sfmt == 'tar' ]]; then
-        wsrep_log_error "******************* FATAL ERROR ********************** "
-        wsrep_log_error "* Xtrabackup-based encryption (encrypt = 1) cannot be  "
-        wsrep_log_error "* enabled with the tar format.                         "
-        wsrep_log_error "* Line $LINENO"
-        wsrep_log_error "****************************************************** "
-        exit 22
-    fi
-
-    wsrep_log_debug "Xtrabackup based encryption enabled in my.cnf"
-
-    if [[ -z $ealgo ]]; then
-        wsrep_log_error "******************* FATAL ERROR ********************** "
-        wsrep_log_error "FATAL: Encryption algorithm empty from my.cnf, bailing out"
-        wsrep_log_error "Line $LINENO"
-        wsrep_log_error "****************************************************** "
-        exit 3
-    fi
-
-    if [[ -z $ekey && ! -r $ekeyfile ]]; then
-        wsrep_log_error "******************* FATAL ERROR ********************** "
-        wsrep_log_error "FATAL: Either key or keyfile must be readable"
-        wsrep_log_error "Line $LINENO"
-        wsrep_log_error "****************************************************** "
-        exit 3
-    fi
-
-    if [[ -n "$ekey" ]]; then
-        wsrep_log_warning "Using the 'encrypt-key' option causes the encryption key"
-        wsrep_log_warning "to be set via the command-line and is considered insecure."
-        wsrep_log_warning "It is recommended to use the 'encrypt-key-file' option instead."
-    fi
-
-    local readonly encrypt_opts=""
-    if [[ -z $ekey ]]; then
-        encrypt_opts=" --encrypt-key-file=$ekeyfile "
-    else
-        encrypt_opts=" --encrypt-key=$ekey "
-    fi
-
-    # Setup the command for all non-SST transfers
-    # Encryption is done by xbcrypt for all other (non-SST) transfers
-    #
-    # It's ok to use the 8.0 xbcrypt, it's compatible with
-    # the 2.4 xbcrypt.
-
-    if [[ ! -x $XTRABACKUP_80_PATH/bin/xbcrypt ]]; then
-        wsrep_log_error "******** FATAL ERROR *********************** "
-        wsrep_log_error "Could not find the xbcrypt executable (version 8.x)."
-        wsrep_log_error "    Expected location: $XTRABACKUP_80_PATH/bin/xbcrypt"
-        wsrep_log_error "Please verify that PXC was installed correctly."
-        wsrep_log_error "* Line $LINENO"
-        wsrep_log_error "******************************************** "
-        exit 2
-    fi
-
-    ecmd_other="${XTRABACKUP_80_PATH}/bin/xbcrypt --encrypt-algo=$ealgo $encrypt_opts "
-    if [[ "$WSREP_SST_OPT_ROLE" == "joiner" ]]; then
-        # Decryption is done by xbcrypt for all other (non-SST) transfers
-        ecmd_other+=" -d"
-    fi
-    ecmd_other+=" 2>/dev/null "
-
-    # ensure that ecmd is clear because SST encryption
-    # goes through xtrabackup, not a separate program
-    ecmd=""
-
-    # Assumes that we are using PXB >= 2.4.7
-    if [[ "$WSREP_SST_OPT_ROLE" == "joiner" ]]; then
-        # Decryption is done by xbstream for SST
-        xbstreameopts_sst=" --decrypt=$ealgo $encrypt_opts --encrypt-threads=$encrypt_threads "
-        xbstreameopts_other=""
-        ieopts=""
-    else
-        # Encryption is done by xtrabackup for SST
-        xbstreameopts_sst=""
-        xbstreameopts_other=""
-        ieopts=" --encrypt=$ealgo $encrypt_opts --encrypt-threads=$encrypt_threads "
-    fi
-
-    stagemsg+="-XB-Encrypted"
 }
 
 #
@@ -452,10 +337,10 @@ get_transfer()
             exit 2
         fi
 
-        if [[ $encrypt -eq 2 || $encrypt -eq 3 || $encrypt -eq 4 ]]; then
+        if [[ $encrypt -eq 4 ]]; then
             wsrep_log_error "******************* FATAL ERROR ********************** "
-            wsrep_log_error "* Using SSL encryption (encrypt= 2, 3, or 4) "
-            wsrep_log_error "* is not supported when using nc(netcat).    "
+            wsrep_log_error "* Using SSL encryption (encrypt=4)"
+            wsrep_log_error "* is not supported when using nc(netcat)."
             wsrep_log_error "* Line $LINENO"
             wsrep_log_error "****************************************************** "
             exit 22
@@ -469,8 +354,21 @@ get_transfer()
                 tcmd="nc $ncsockopt -dl ${TSST_PORT}"
             fi
         else
+            # Check to see if netcat supports the '-N' flag.
+            #      -N Shutdown the network socket after EOF on stdin
+            # If it supports the '-N' flag, then we need to use the '-N'
+            # flag, otherwise the transfer will stay open after the file
+            # transfer and cause the command to timeout.
+            # Older versions of netcat did not need this flag and will
+            # return an error if the flag is used.
+            #
+            tcmd_extra=""
+            if nc -h 2>&1 | grep -qw -- -N; then
+                tcmd_extra+=" -N "
+            fi
+
             # netcat doesn't understand [] around IPv6 address
-            tcmd="nc ${REMOTEIP//[\[\]]/} ${TSST_PORT}"
+            tcmd="nc ${tcmd_extra} ${REMOTEIP//[\[\]]/} ${TSST_PORT}"
         fi
     else
         tfmt='socat'
@@ -485,7 +383,7 @@ get_transfer()
 
         donor_extra=""
         joiner_extra=""
-        if [[ $encrypt -eq 2 || $encrypt -eq 3 || $encrypt -eq 4 ]]; then
+        if [[ $encrypt -eq 4 ]]; then
             if ! socat -V | grep -q WITH_OPENSSL; then
                 wsrep_log_error "******************* FATAL ERROR ********************** "
                 wsrep_log_error "* socat is not openssl enabled.         "
@@ -527,45 +425,7 @@ get_transfer()
             sockopt=",${sockopt}"
         fi
 
-        if [[ $encrypt -eq 2 ]]; then
-            wsrep_log_warning "**** WARNING **** encrypt=2 is deprecated and will be removed in a future release"
-            wsrep_log_debug "Using openssl based encryption with socat: with crt and ca"
-
-            verify_file_exists "$tcert" "Both certificate and CA files are required." \
-                                        "Please check the 'tcert' option.           "
-            verify_file_exists "$tca" "Both certificate and CA files are required." \
-                                      "Please check the 'tca' option.             "
-            verify_ca_matches_cert $tca $tcert
-
-            stagemsg+="-OpenSSL-Encrypted-2"
-            if [[ "$WSREP_SST_OPT_ROLE"  == "joiner" ]];then
-                wsrep_log_debug "Decrypting with CERT: $tcert, CA: $tca"
-                tcmd="socat -u openssl-listen:${TSST_PORT},reuseaddr,cert=${tcert},cafile=${tca}${joiner_extra}${sockopt} stdio"
-            else
-                wsrep_log_debug "Encrypting with CERT: $tcert, CA: $tca"
-                tcmd="socat -u stdio openssl-connect:${REMOTEIP}:${TSST_PORT},cert=${tcert},cafile=${tca}${donor_extra}${sockopt}"
-            fi
-        elif [[ $encrypt -eq 3 ]];then
-            wsrep_log_warning "**** WARNING **** encrypt=3 is deprecated and will be removed in a future release"
-            wsrep_log_debug "Using openssl based encryption with socat: with key and crt"
-
-            verify_file_exists "$tcert" "Both certificate and key files are required." \
-                                        "Please check the 'tcert' option.            "
-            verify_file_exists "$tkey" "Both certificate and key files are required." \
-                                       "Please check the 'tkey' option.             "
-            verify_cert_matches_key $tcert $tkey
-
-            stagemsg+="-OpenSSL-Encrypted-3"
-            if [[ "$WSREP_SST_OPT_ROLE"  == "joiner" ]];then
-                wsrep_log_debug "Decrypting with CERT: $tcert, KEY: $tkey"
-                tcmd="socat -u openssl-listen:${TSST_PORT},reuseaddr,cert=${tcert},key=${tkey},verify=0${joiner_extra}${sockopt} stdio"
-            else
-                wsrep_log_debug "Encrypting with CERT: $tcert, KEY: $tkey"
-                tcmd="socat -u stdio openssl-connect:${REMOTEIP}:${TSST_PORT},cert=${tcert},key=${tkey},verify=0${sockopt}"
-            fi
-        elif [[ $encrypt -eq 4 ]]; then
-            wsrep_log_debug "Using openssl based encryption with socat: with key, crt, and ca"
-
+        if [[ $encrypt -eq 4 ]]; then
             verify_file_exists "$ssl_ca" "CA, certificate, and key files are required." \
                                          "Please check the 'ssl-ca' option.           "
             verify_file_exists "$ssl_cert" "CA, certificate, and key files are required." \
@@ -578,18 +438,14 @@ get_transfer()
 
             stagemsg+="-OpenSSL-Encrypted-4"
             if [[ "$WSREP_SST_OPT_ROLE"  == "joiner" ]]; then
-                wsrep_log_debug "Decrypting with CERT: $ssl_cert, KEY: $ssl_key, CA: $ssl_ca"
+                wsrep_log_debug "Decrypting with SSL. CERT: $ssl_cert, KEY: $ssl_key, CA: $ssl_ca"
                 tcmd="socat -u openssl-listen:${TSST_PORT},reuseaddr,cert=${ssl_cert},key=${ssl_key},cafile=${ssl_ca},verify=1${joiner_extra}${sockopt} stdio"
             else
-                wsrep_log_debug "Encrypting with CERT: $ssl_cert, KEY: $ssl_key, CA: $ssl_ca"
+                wsrep_log_debug "Encrypting with SSL. CERT: $ssl_cert, KEY: $ssl_key, CA: $ssl_ca"
                 tcmd="socat -u stdio openssl-connect:${REMOTEIP}:${TSST_PORT},cert=${ssl_cert},key=${ssl_key},cafile=${ssl_ca},verify=1${donor_extra}${sockopt}"
             fi
 
         else
-            if [[ $encrypt -eq 1 ]]; then
-                wsrep_log_warning "**** WARNING **** encrypt=1 is deprecated and will be removed in a future release"
-            fi
-
             if [[ "$WSREP_SST_OPT_ROLE"  == "joiner" ]]; then
                 tcmd="socat -u TCP-LISTEN:${TSST_PORT},reuseaddr${sockopt} stdio"
             else
@@ -605,9 +461,6 @@ read_cnf()
 {
     sfmt=$(parse_cnf sst streamfmt "xbstream")
     tfmt=$(parse_cnf sst transferfmt "socat")
-    tca=$(parse_cnf sst tca "")
-    tcert=$(parse_cnf sst tcert "")
-    tkey=$(parse_cnf sst tkey "")
     encrypt=$(parse_cnf sst encrypt 0)
     sockopt=$(parse_cnf sst sockopt "")
     ncsockopt=$(parse_cnf sst ncsockopt "")
@@ -659,16 +512,6 @@ read_cnf()
 
     if [[ -n $keyring_file_data ]]; then
         KEYRING_FILE_DIR=$(dirname "${keyring_file_data}")
-    fi
-
-    # Refer to http://www.percona.com/doc/percona-xtradb-cluster/manual/xtrabackup_sst.html
-    ealgo=$(parse_cnf xtrabackup encrypt "")
-    ekey=$(parse_cnf xtrabackup encrypt-key "")
-    ekeyfile=$(parse_cnf xtrabackup encrypt-key-file "")
-    if [[ -z $ealgo ]]; then
-        ealgo=$(parse_cnf sst encrypt-algo "")
-        ekey=$(parse_cnf sst encrypt-key "")
-        ekeyfile=$(parse_cnf sst encrypt-key-file "")
     fi
 
     # Pull the parameters needed for encrypt=4
@@ -771,6 +614,7 @@ read_cnf()
         sockopt+=",retry=30"
     fi
 
+    xbstream_opts=$(parse_cnf sst xbstream-opts "")
 }
 
 #
@@ -841,9 +685,9 @@ get_stream()
         # It's ok to use the 8.0 xbstream, it's compatible with
         # the 2.4 xbstream.
         if [[ "$WSREP_SST_OPT_ROLE"  == "joiner" ]]; then
-            strmcmd="${XTRABACKUP_80_PATH}/bin/xbstream \$xbstreameopts -x"
+            strmcmd="${XTRABACKUP_80_PATH}/bin/xbstream -x $xbstream_opts"
         else
-            strmcmd="${XTRABACKUP_80_PATH}/bin/xbstream \$xbstreameopts -c \${FILE_TO_STREAM}"
+            strmcmd="${XTRABACKUP_80_PATH}/bin/xbstream -c $xbstream_opts \${FILE_TO_STREAM}"
         fi
     else
         wsrep_check_program tar
@@ -969,12 +813,11 @@ cleanup_donor()
     rm -rf "${KEYRING_FILE_DIR}/${XB_DONOR_KEYRING_FILE}" || true
 
     exit $estatus
-
 }
 
 setup_ports()
 {
-    if [[ "$WSREP_SST_OPT_ROLE"  == "donor" ]];then
+    if [[ "$WSREP_SST_OPT_ROLE" == "donor" ]]; then
         SST_PORT=$WSREP_SST_OPT_PORT
         REMOTEIP=$WSREP_SST_OPT_HOST
         lsn=$(echo $WSREP_SST_OPT_PATH | awk -F '[/]' '{ print $2 }')
@@ -1319,8 +1162,38 @@ send_data_from_donor_to_joiner()
     local msg=$2
 
     pushd ${dir} 1>/dev/null
+
+    # Check that we have a valid FILE_TO_STREAM
+    if [[ -n $FILE_TO_STREAM && ! -r $FILE_TO_STREAM ]]; then
+        wsrep_log_error "******************* FATAL ERROR ********************** "
+        wsrep_log_error "Error while attempting to send a file to the joiner"
+        wsrep_log_error "Could not find/read the file: $FILE_TO_STREAM"
+        wsrep_log_error "Line $LINENO"
+        wsrep_log_error "****************************************************** "
+        exit 2
+    fi
+
     set +e
-    timeit "$msg" "$strmcmd | $tcmd; RC=( "\${PIPESTATUS[@]}" )"
+
+    if [[ $tfmt == "nc" ]]; then
+        # if using nc as a transfer method, then implement the retry
+        # logic ourselves
+        local rc=1
+        local counter=1
+
+        while [[ $rc -ne 0 && counter -le 30 ]]; do
+            timeit "$msg" "$strmcmd | $tcmd; RC=( "\${PIPESTATUS[@]}" )"
+
+            # Retry if nc returns an error
+            rc=${RC[1]}
+            counter=$((counter+1))
+            sleep 1
+        done
+    else
+        # If using socat, then we can rely on the built-in socat retry logic
+        timeit "$msg" "$strmcmd | $tcmd; RC=( "\${PIPESTATUS[@]}" )"
+    fi
+
     set -e
     popd 1>/dev/null
 
@@ -1529,7 +1402,7 @@ function initialize_pxb_commands()
                 --target-dir=\${DATA} 2>&1 | logger -p daemon.err -t ${ssystag}innobackupex-move "
             INNOBACKUP="${pxb_bin_path} --defaults-file=${WSREP_SST_OPT_CONF} \
                 --defaults-group=mysqld${WSREP_SST_OPT_CONF_SUFFIX} $disver $iopts \
-                \$ieopts \$INNOEXTRA \$keyringbackupopt --lock-ddl --backup --galera-info \
+                \$INNOEXTRA \$keyringbackupopt --lock-ddl --backup --galera-info \
                 --binlog-info=ON \$encrypt_backup_options --stream=\$sfmt \
                 --xtrabackup-plugin-dir="$pxb_plugin_dir" \
                 --target-dir=\$itmpdir 2> >(logger -p daemon.err -t ${ssystag}innobackupex-backup)"
@@ -1549,7 +1422,7 @@ function initialize_pxb_commands()
             --target-dir=\${DATA} &>\${DATA}/innobackup.move.log"
         INNOBACKUP="${pxb_bin_path} --defaults-file=${WSREP_SST_OPT_CONF} \
             --defaults-group=mysqld${WSREP_SST_OPT_CONF_SUFFIX} $disver $iopts \
-            \$ieopts \$INNOEXTRA \$keyringbackupopt --lock-ddl --backup --galera-info \
+            \$INNOEXTRA \$keyringbackupopt --lock-ddl --backup --galera-info \
             --binlog-info=ON \$encrypt_backup_options --stream=\$sfmt \
             --xtrabackup-plugin-dir="$pxb_plugin_dir" \
             --target-dir=\$itmpdir 2>\${DATA}/innobackup.backup.log"
@@ -1586,9 +1459,13 @@ fi
 # 2.4.12: XB fixed bugs like keyring is empty + move-back stage now uses params from
 #         my.cnf.
 #
-XB_2x_REQUIRED_VERSION="2.4.18"
+# 2.4.17  PXB added Data-At-Rest Encryption support found in PS/PXC 5.7.28
+#
+# 2.4.20  Transition-key fixes
+#
 
-wsrep_log_info "###### Looking for XB-2.4.x binaries"
+XB_2x_REQUIRED_VERSION="2.4.20"
+
 if [[ ! -x $XTRABACKUP_24_PATH/bin/$XTRABACKUP_BIN ]]; then
     wsrep_log_error "******************* FATAL ERROR ********************** "
     wsrep_log_error "Could not find the $XTRABACKUP_BIN executable (version 2.x)."
@@ -1610,9 +1487,11 @@ fi
 
 # Verify our PXB 8.0 version
 #
-XB_8x_REQUIRED_VERSION="8.0.9"
+# 8.0.11  Transition-key fixes
+#
 
-wsrep_log_info "###### Looking for XB-8.0.x binaries"
+XB_8x_REQUIRED_VERSION="8.0.11"
+
 if [[ ! -x $XTRABACKUP_80_PATH/bin/$XTRABACKUP_BIN ]]; then
     wsrep_log_error "******************* FATAL ERROR ********************** "
     wsrep_log_error "Could not find the $XTRABACKUP_BIN executable (version 8.x)."
@@ -1720,13 +1599,40 @@ if [[ "$pxc_encrypt_cluster_traffic" == "on" ]]; then
     wsrep_log_debug "with encrypt=4  ssl_ca=$ssl_ca  ssl_cert=$ssl_cert  ssl_key=$ssl_key"
 fi
 
+
+# PXC no longer supports encrypt=1,2,3
+if [[ $encrypt -eq 1 || $encrypt -eq 2 || $encrypt -eq 3 ]]; then
+    wsrep_log_error "******************* FATAL ERROR ********************** "
+    wsrep_log_error "* encrypt modes 1,2,and 3 are no longer supported."
+    wsrep_log_error "* Please use SSL-based encryption (encrypt=4)"
+    wsrep_log_error "* Line $LINENO"
+    wsrep_log_error "****************************************************** "
+    exit 22
+fi
+
+
+# Check to see if any encrypt options exist in the [xtrabackup] section
+# These are no longer supported (since we no longer support encrypt=1)
+# They were used to encrypt the backup as it's being transferred, this
+# is now done using SSL (encrypt=4)
+if $MY_PRINT_DEFAULTS -c $WSREP_SST_OPT_CONF xtrabackup | grep -q encrypt; then
+    wsrep_log_error "******************* FATAL ERROR ********************** "
+    wsrep_log_error "* xtrabackup-based encryption is no longer supported."
+    wsrep_log_error "* Please remove the encryption options from the"
+    wsrep_log_error "* [xtrabackup] section of the configuration file and use"
+    wsrep_log_error "* SSL-based encryption (encrypt=4)."
+    wsrep_log_error "* Line $LINENO"
+    wsrep_log_error "****************************************************** "
+    exit 2
+fi
+
+
 if [[ ${FORCE_FTWRL:-0} -eq 1 ]]; then
     wsrep_log_warning "Forcing FTWRL due to environment variable FORCE_FTWRL equal to $FORCE_FTWRL"
     iopts+=" --no-backup-locks "
 fi
 
 INNOEXTRA=""
-
 
 #
 # Setup stream for transfering and streaming.
@@ -1779,7 +1685,7 @@ then
     # append transition_key only if keyring is being used.
     if [[ $keyring_plugin -eq 1 ]]; then
         echo "transition-key=$transition_key" >> "$sst_info_file_path"
-        encrypt_backup_options="--transition-key=\$transition_key"
+        encrypt_backup_options="--transition-key=$transition_key"
     fi
 
     #
@@ -1811,7 +1717,6 @@ then
            INNOEXTRA+=" --password="
         fi
 
-        get_keys
         check_extra
 
         ttcmd="$tcmd"
@@ -1820,23 +1725,11 @@ then
         if [[ -n "$scomp" ]]; then
             tcmd=" $scomp | $tcmd "
         fi
-        # Add encryption to the head of the stream (if specified)
-        if [[ $encrypt -eq 1 && -n "$ecmd_other" ]]; then
-            tcmd=" \$ecmd_other | $tcmd "
-        fi
-        if [[ $encrypt -eq 1 ]]; then
-            xbstreameopts=$xbstreameopts_other
-        fi
 
         # Before the real SST,send the sst-info
         wsrep_log_debug "Streaming SST meta-info file before SST"
         FILE_TO_STREAM=$SST_INFO_FILE
         send_data_from_donor_to_joiner "$donor_tmpdir" "${stagemsg}-sst-info"
-
-        # Send the wsrep_state.dat file also
-        wsrep_log_debug "Streaming WSREP state file before SST"
-        FILE_TO_STREAM="wsrep_state.dat"
-        send_data_from_donor_to_joiner "${DATA}" "${stagemsg}-wsrep-state"
 
         # Restore the transport commmand to its original state
         tcmd="$ttcmd"
@@ -1857,13 +1750,6 @@ then
         # Add compression to the head of the stream (if specified)
         if [[ -n $scomp ]]; then
             tcmd="$scomp | $tcmd"
-        fi
-        # Add encryption to the head of the stream (if specified)
-        if [[ $encrypt -eq 1 && -n "$ecmd" ]]; then
-            tcmd=" \$ecmd | $tcmd "
-        fi
-        if [[ $encrypt -eq 1 ]]; then
-            xbstreameopts=$xbstreameopts_sst
         fi
 
         set +e
@@ -1891,17 +1777,10 @@ then
         wsrep_log_info "Bypassing SST. Can work it through IST"
         echo "continue" # now server can resume updating data
         echo "1" > "${donor_tmpdir}/${IST_FILE}"
-        get_keys
+
         # Add compression to the head of the stream (if specified)
         if [[ -n "$scomp" ]]; then
             tcmd=" $scomp | $tcmd "
-        fi
-        # Add encryption to the head of the stream (if specified)
-        if [[ $encrypt -eq 1 && -n "$ecmd_other" ]]; then
-            tcmd=" \$ecmd_other | $tcmd "
-        fi
-        if [[ $encrypt -eq 1 ]]; then
-            xbstreameopts=$xbstreameopts_other
         fi
 
         strmcmd+=" \${IST_FILE}"
@@ -1951,15 +1830,8 @@ then
         tcmd+=" | $pcmd"
     fi
 
-    get_keys
-    if [[ $encrypt -eq 1 && -n "$ecmd_other" ]]; then
-        strmcmd=" \$ecmd_other | $strmcmd"
-    fi
     if [[ -n $sdecomp ]]; then
         strmcmd=" $sdecomp | $strmcmd"
-    fi
-    if [[ $encrypt -eq 1 ]]; then
-        xbstreameopts=$xbstreameopts_other
     fi
 
     initialize_tmpdir
@@ -1982,9 +1854,18 @@ then
         DONOR_MYSQL_VERSION=$(parse_sst_info "$sst_file_info_path" sst mysql-version "")
 
         transition_key=$(parse_sst_info "$sst_file_info_path" sst transition-key "")
+
         if [[ -n $transition_key ]]; then
-            encrypt_prepare_options="--transition-key=\$transition_key"
-            encrypt_move_options="--transition-key=\$transition_key --generate-new-master-key"
+
+            # Use the broken key if the donor version is < 5.7.29 and is not 5.7.28-31-57.2
+            # In other words, 5.7.28-31-57.2 and above will use the key that was sent
+            if compare_versions "$DONOR_MYSQL_VERSION" "<" "5.7.29" &&
+               [[ $DONOR_MYSQL_VERSION != "5.7.28-31-57.2" ]]; then
+                transition_key="\$transition_key"
+            fi
+
+            encrypt_prepare_options="--transition-key=$transition_key"
+            encrypt_move_options="--transition-key=$transition_key --generate-new-master-key"
         fi
 
     elif [[ -r "${STATDIR}/${XB_GTID_INFO_FILE}" ]]; then
@@ -2011,7 +1892,8 @@ then
         # We also reject the donor if it does not send a version string.
         # (which is true for any version of PXC < 5.7.19)
         #
-        # Truncate the version numbers (we want the major.minor version like "5.6", not "5.6.35-...")
+        # Truncate the version numbers (we want the major.minor.revision version
+        # like "5.6.35", not "5.6.35-...")
         local_version_str=$(expr match "$MYSQL_VERSION" '\([0-9]\+\.[0-9]\+\.[0-9]\+\)')
         donor_version_str=$(expr match "$DONOR_MYSQL_VERSION" '\([0-9]\+\.[0-9]\+\.[0-9]\+\)')
         donor_version_str=${donor_version_str:-"0.0.0"}
@@ -2064,21 +1946,6 @@ then
             JOINER_SST_DIR=$DATA/sst-xb-tmpdir
         else
             JOINER_SST_DIR=$(mktemp -p "${tmpdirbase}" -dt sst_XXXX)
-        fi
-
-        # Wait to receive the wsrep_state.dat file (this will not be sent with 5.7)
-        # So, only wait for this if the donor version >= 8.0
-        if compare_versions "$donor_version_str" ">=" "8.0.0"; then
-
-            recv_data_from_donor_to_joiner $JOINER_SST_DIR "${stagemsg}-wsrep-state" $stimeout -2
-
-            if [[ ! -r "${JOINER_SST_DIR}/wsrep_state.dat" ]]; then
-                wsrep_log_error "******************* FATAL ERROR ********************** "
-                wsrep_log_error "Did not receive expected file from donor: 'wsrep_state.dat'"
-                wsrep_log_error "Line $LINENO"
-                wsrep_log_error "****************************************************** "
-                exit 32
-            fi
         fi
 
         # server-id is already part of backup-my.cnf so avoid appending it.
@@ -2159,14 +2026,8 @@ then
         fi
 
         get_stream
-        if [[ $encrypt -eq 1 && -n "$ecmd" ]]; then
-            strmcmd=" \$ecmd | $strmcmd"
-        fi
         if [[ -n $sdecomp ]]; then
             strmcmd=" $sdecomp | $strmcmd"
-        fi
-        if [[ $encrypt -eq 1 ]]; then
-            xbstreameopts=$xbstreameopts_sst
         fi
 
         (recv_data_from_donor_to_joiner "$JOINER_SST_DIR" "${stagemsg}-SST" 0 0) &
@@ -2354,10 +2215,6 @@ then
             wsrep_log_debug "Keyring move successful"
         fi
 
-        if [[ -r ${STATDIR}/wsrep_state.dat ]]; then
-            mv "${STATDIR}/wsrep_state.dat" "${TDATA}"
-        fi
-
         wsrep_log_debug "Move successful, removing ${DATA}"
         rm -rf "$DATA"
         DATA=${TDATA}
@@ -2380,11 +2237,6 @@ then
     #  Run this AFTER the move to ensure that all of the data files have been
     #  placed correctly (especially for files that live outside of the datadir).
     #-----------------------------------------------------------------------
-
-    if [[ -r "${DATA}/wsrep_state.dat" ]]; then
-        read_variables_from_wsrep_state "${DATA}/wsrep_state.dat"
-        [[ $? -ne 0 ]] && exit 2
-    fi
 
     wsrep_log_info "Running post-processing..........."
     set +e
